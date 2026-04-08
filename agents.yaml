@@ -1,0 +1,113 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# COUNCIL CONFIGURATION
+#
+# To add more keys: add new env var names to the keys list under each provider.
+# The env vars must also exist in your .env file.
+# The orchestrator reads this file at runtime to decide role assignments.
+# ─────────────────────────────────────────────────────────────────────────────
+
+orchestrator:
+  provider: gemini
+  model: gemini-2.5-flash
+  # Orchestrator always uses the first available Gemini key
+  # Note: gemini-2.0-flash is deprecated (sunset June 1, 2026); using 2.5-flash
+  keys: [GEMINI_KEY_1, GEMINI_KEY_2]
+
+providers:
+
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com"
+    rpm_limit: 15
+    daily_limit: 1000
+    # What this provider is good at — used by orchestrator for planning
+    strengths: [orchestration, long_context, planning, synthesis]
+    models:
+      default: "gemini-2.5-flash"
+    # Add GEMINI_KEY_3, GEMINI_KEY_4 here as you create more accounts
+    # Updated: gemini-2.0-flash is deprecated (sunset June 1, 2026)
+    keys: [GEMINI_KEY_1, GEMINI_KEY_2]
+
+  groq:
+    base_url: "https://api.groq.com/openai/v1"
+    rpm_limit: 30
+    daily_limit: 14400
+    strengths: [speed, triage, classification, high_volume]
+    models:
+      fast: "llama-3.1-8b-instant"
+      capable: "llama-3.3-70b-versatile"
+      default: "llama-3.1-8b-instant"
+    keys: [GROQ_KEY_1, GROQ_KEY_2]
+
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    rpm_limit: 20
+    daily_limit: 200
+    strengths: [reasoning, deep_analysis, research]
+    models:
+      reasoning: "meta-llama/llama-3.3-70b-instruct"
+      general: "meta-llama/llama-3.3-70b-instruct"
+      default: "meta-llama/llama-3.3-70b-instruct"
+    # Updated: removed :free suffix; base model names work reliably on free tier
+    keys: [OR_KEY_1, OR_KEY_2]
+
+  cerebras:
+    base_url: "https://api.cerebras.ai/v1"
+    rpm_limit: 30
+    daily_limit: 14400
+    strengths: [speed, analysis, volume]
+    models:
+      capable: "llama3.1-8b"
+      default: "llama3.1-8b"
+    keys: [CEREBRAS_KEY_1, CEREBRAS_KEY_2]
+
+  cohere:
+    base_url: "https://api.cohere.com/v1"
+    rpm_limit: 20
+    daily_limit: 1000
+    strengths: [synthesis, rag, citation, summarization]
+    models:
+      synthesis: "command-a-03-2025"
+      default: "command-a-03-2025"
+    # Updated: command-r-plus deprecated Sept 15, 2025; using command-a-03-2025
+    keys: [COHERE_KEY_1, COHERE_KEY_2]
+
+  github:
+    base_url: "https://models.inference.ai.azure.com"
+    rpm_limit: 15
+    daily_limit: 150
+    strengths: [general, chunking, routing]
+    models:
+      general: "gpt-4o-mini"
+      default: "gpt-4o-mini"
+    keys: [GH_KEY_1, GH_KEY_2]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE THRESHOLDS
+# ─────────────────────────────────────────────────────────────────────────────
+thresholds:
+  # Minimum relevance score (0-10) for a chunk to pass triage
+  relevance_min_score: 6
+  # Minimum synthesis confidence to skip second-pass
+  confidence_min: 0.70
+  # Maximum tokens per chunk sent to an analyst
+  max_chunk_tokens: 3000
+  # Maximum scraped chunks to process per query
+  max_chunks: 20
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCRAPER SETTINGS
+# ─────────────────────────────────────────────────────────────────────────────
+scrapers:
+  hackernews:
+    enabled: true
+    results_per_query: 15
+    timeout_seconds: 10
+  reddit:
+    enabled: false
+    results_per_query: 10
+    timeout_seconds: 15
+    subreddits: []       # Disabled: user account banned, credentials unavailable
+  web:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 12

@@ -1,0 +1,62 @@
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] reddit: disabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [4e4a3a87] Starting pipeline: give me all the transistor and capacitor information for the Denon SA3900 amplif
+WARNING [agents.orchestrator] Orchestrator 429 — key GEMINI_KEY_1 cooling for 48s. Falling back to non-LLM plan.
+INFO [scrapers.registry] [registry] hackernews: 15 chunks
+WARNING [core.pipeline] [4e4a3a87] Triage removed all chunks — keeping top 3
+WARNING [agents.base_agent] [analyst_0] attempt 1/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+WARNING [agents.base_agent] [analyst_0] attempt 2/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+WARNING [core.key_pool] Key CEREBRAS_KEY_1 soft-disabled after 3 errors
+WARNING [agents.base_agent] [analyst_0] attempt 3/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+ERROR [agents.base_agent] [analyst_0] All attempts failed. Last: Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_error', 'param': 'model', 'code': 'model_not_found'}
+WARNING [agents.base_agent] [synthesizer] attempt 1/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+WARNING [agents.base_agent] [synthesizer] attempt 2/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+WARNING [agents.base_agent] [synthesizer] attempt 3/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+ERROR [agents.base_agent] [synthesizer] All attempts failed. Last: 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current
+INFO [core.pipeline] [ea95e810] Starting pipeline: suggest a good list of chinese fountain pens that can be found in srilanka
+WARNING [agents.orchestrator] Orchestrator 429 — key GEMINI_KEY_1 cooling for 12s. Falling back to non-LLM plan.
+INFO [scrapers.registry] [registry] hackernews: 15 chunks
+WARNING [core.key_pool] Key CEREBRAS_KEY_1 soft-disabled after 3 errors
+WARNING [agents.base_agent] [triage] attempt 1/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+WARNING [agents.base_agent] [triage] attempt 2/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+WARNING [agents.base_agent] [triage] attempt 3/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+ERROR [agents.base_agent] [triage] All attempts failed. Last: Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_error', 'param': 'model', 'code': 'model_not_found'}
+WARNING [core.key_pool] Key CEREBRAS_KEY_2 soft-disabled after 3 errors
+WARNING [agents.base_agent] [triage] attempt 1/3 failed (cerebras): Error code: 404 - {'message': 'Model llama-3.3-70b does not exist or you do not have access to it.', 'type': 'not_found_
+WARNING [core.pipeline] [ea95e810] Triage removed all chunks — keeping top 3
+WARNING [agents.base_agent] [synthesizer] attempt 1/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+WARNING [agents.base_agent] [synthesizer] attempt 2/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+WARNING [agents.base_agent] [synthesizer] attempt 3/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+ERROR [agents.base_agent] [synthesizer] All attempts failed. Last: 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] reddit: disabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [cc32cda4] Starting pipeline: give me a list of good fountain pens in srilanka
+WARNING [agents.orchestrator] Orchestrator 429 — key GEMINI_KEY_1 cooling for 65s. Falling back to non-LLM plan.
+INFO [scrapers.registry] [registry] hackernews: 12 chunks
+WARNING [agents.base_agent] [synthesizer] attempt 1/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+WARNING [agents.base_agent] [synthesizer] attempt 2/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+WARNING [agents.base_agent] [synthesizer] attempt 3/3 failed (gemini): 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, hea
+ERROR [agents.base_agent] [synthesizer] All attempts failed. Last: 429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] reddit: disabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [6afbfce2] Starting pipeline: give me all the transistor information for the Denon SA 3900 amplifier
+INFO [scrapers.registry] [registry] Skipping unavailable scrapers: {'reddit'}
+WARNING [scrapers.base_scraper] [web] Failed: DDG returned status 202
+INFO [scrapers.registry] [registry] web: 0 chunks
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] reddit: disabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [121474ef] Starting pipeline: give me transistor information for Denon SA3900 amplifier
+INFO [scrapers.registry] [registry] Skipping unavailable scrapers: {'reddit'}
+INFO [scrapers.registry] [registry] web: 1 chunks
+INFO [core.pipeline] [8a69a5d6] Starting pipeline: give me the specific transistor part ids or part names for the transistors insid
+WARNING [scrapers.base_scraper] [web] Failed: DDG returned status 202
+INFO [scrapers.registry] [registry] web: 0 chunks
+INFO [core.pipeline] [63d54c29] Starting pipeline: give me a good list of names for a company that handles dog content logistics
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] reddit: disabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [7375a076] Starting pipeline: give me information on Crinacle RED v2 IEMs
