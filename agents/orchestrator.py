@@ -28,7 +28,47 @@ from core.exceptions import NoAvailableKeysError
 
 logger = logging.getLogger(__name__)
 
-AVAILABLE_SCRAPERS = ["hackernews", "reddit", "web"]
+AVAILABLE_SCRAPERS = ["hackernews", "web", "arxiv", "wikipedia", "ddgs", "openalex", "open_meteo", "sec_edgar", "youtube"]
+
+# Query intent detection keywords for smart scraper selection
+QUERY_INTENT_KEYWORDS = {
+    "academic": {
+        "keywords": ["paper", "research", "study", "journal", "arxiv", "doi", "citation", "peer review", "methodology"],
+        "scrapers": ["arxiv", "openalex", "web"],
+    },
+    "current_events": {
+        "keywords": ["latest", "recent", "news", "today", "breaking", "update", "2024", "2025", "2026", "announce", "release"],
+        "scrapers": ["hackernews", "web", "ddgs"],
+    },
+    "knowledge_base": {
+        "keywords": ["what is", "definition", "explain", "how does", "background", "history", "overview", "introduction"],
+        "scrapers": ["wikipedia", "web"],
+    },
+    "weather_climate": {
+        "keywords": ["weather", "temperature", "forecast", "climate", "wind", "rain", "celsius", "fahrenheit"],
+        "scrapers": ["open_meteo", "web"],
+    },
+    "finance_sec": {
+        "keywords": ["sec filing", "10-k", "10-q", "stock", "earnings", "financial", "sec.gov", "cik", "ticker"],
+        "scrapers": ["sec_edgar", "web"],
+    },
+    "video_multimedia": {
+        "keywords": ["video", "youtube", "tutorial", "demo", "stream", "channel", "playlist", "watch"],
+        "scrapers": ["youtube", "web"],
+    },
+    "tech_trends": {
+        "keywords": ["algorithm", "github", "code", "library", "framework", "open source", "repository", "commit"],
+        "scrapers": ["hackernews", "web", "ddgs"],
+    },
+    "community_opinion": {
+        "keywords": ["forum", "community", "people", "opinion", "experience", "recommend", "review", "discussion"],
+        "scrapers": ["hackernews", "web"],
+    },
+    "specification_technical": {
+        "keywords": ["spec", "datasheet", "part", "model", "schematic", "component", "manual", "guide", "documentation", "tutorial"],
+        "scrapers": ["web", "arxiv"],
+    },
+}
 
 
 def _extract_retry_delay(error_str: str) -> float:
@@ -60,14 +100,14 @@ class OrchestratorAgent:
             api_key, model, key_state = self.pool.get_orchestrator_key()
         except NoAvailableKeysError:
             logger.error("No orchestrator keys available — using fallback plan")
-            plan = self._fallback_plan()
+            plan = self._fallback_plan(snapshot=None, query=query)
             await state_store.log_thought(query_id, "orchestrator", "fallback: no keys")
             return plan
 
         snapshot = self.pool.get_capabilities_snapshot()
         if not snapshot:
             logger.error("No providers available in snapshot — using fallback plan")
-            plan = self._fallback_plan()
+            plan = self._fallback_plan(snapshot=None, query=query)
             await state_store.log_thought(query_id, "orchestrator", "fallback: empty snapshot")
             return plan
 
@@ -97,7 +137,7 @@ class OrchestratorAgent:
                 key_state.record_error(is_rate_limit=False)
                 logger.error(f"Orchestrator API call failed: {e}")
 
-            plan = self._fallback_plan(snapshot)
+            plan = self._fallback_plan(snapshot, query=query)
             await state_store.log_thought(
                 query_id, "orchestrator",
                 f"fallback: {'rate_limit' if is_rate_limit else str(e)[:80]}"
@@ -260,7 +300,64 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
         models = snapshot.get(provider, {}).get("models", {})
         return models.get("default") or (list(models.values())[0] if models else "")
 
-    def _fallback_plan(self, snapshot: Optional[dict] = None) -> dict:
+    def _detect_query_intent(self, query: str) -> str:
+        """
+        Analyze query to detect intent category.
+        Returns the intent name or "general" as fallback.
+        
+        Match specificity: More specific intents checked first (weather, finance)
+        before generic ones (knowledge_base).
+        """
+        q = query.lower()
+        
+        # Check specific intents first (avoid false matches with generic intents)
+        for intent in ["weather_climate", "finance_sec", "video_multimedia", "academic"]:
+            config = QUERY_INTENT_KEYWORDS.get(intent, {})
+            keywords = config.get("keywords", [])
+            if any(kw in q for kw in keywords):
+                logger.debug(f"[orchestrator] Detected intent: {intent}")
+                return intent
+        
+        # Then check generic intents
+        for intent in ["current_events", "knowledge_base", "tech_trends", "community_opinion", "specification_technical"]:
+            config = QUERY_INTENT_KEYWORDS.get(intent, {})
+            keywords = config.get("keywords", [])
+            if any(kw in q for kw in keywords):
+                logger.debug(f"[orchestrator] Detected intent: {intent}")
+                return intent
+        
+        return "general"
+
+    def _select_scrapers(self, snapshot: Optional[dict] = None, query: str = "") -> list[str]:
+        """
+        Smart scraper selection based on query intent and availability.
+        Returns a prioritized list of available scrapers.
+        """
+        intent = self._detect_query_intent(query)
+        
+        # Get priority scrapers for this intent
+        priority_scrapers = QUERY_INTENT_KEYWORDS.get(intent, {}).get("scrapers", ["hackernews", "web"])
+        
+        # Build final list: prioritized scrapers that are available, then any other available
+        selected = []
+        for scraper in priority_scrapers:
+            if scraper in AVAILABLE_SCRAPERS and scraper not in selected:
+                selected.append(scraper)
+        
+        # Backfill with any remaining available scrapers from the actual registry
+        # (we can't check registry here, so use hardcoded fallback)
+        for scraper in AVAILABLE_SCRAPERS:
+            if scraper not in selected and scraper in ["hackernews", "web"]:
+                selected.append(scraper)
+        
+        # Ensure at least one scraper
+        if not selected:
+            selected = ["hackernews"]
+        
+        logger.debug(f"[orchestrator] Query intent='{intent}' → scrapers={selected}")
+        return selected
+
+    def _fallback_plan(self, snapshot: Optional[dict] = None, query: str = "") -> dict:
         """
         Build a valid runnable plan entirely without an LLM call.
         Used when Gemini is rate-limited or unavailable.
@@ -282,9 +379,12 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
         reason = self._pick_by_strength(snapshot, ["reasoning", "analysis"]) or providers[0]
         synth  = self._pick_by_strength(snapshot, ["synthesis", "rag"]) or providers[-1]
 
+        # Smart scraper selection based on query intent
+        scrapers = self._select_scrapers(snapshot, query)
+
         return {
             "profile": "research",
-            "scrapers": ["hackernews"],
+            "scrapers": scrapers,
             "analyst_count": 1,
             "roles": {
                 "triage": {

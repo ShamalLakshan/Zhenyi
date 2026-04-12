@@ -42,10 +42,17 @@ class TriageAgent(BaseAgent):
     async def _score_one(self, query: str, chunk: dict, query_id: str) -> float:
         content_preview = chunk.get("content", "")[:600]
         prompt = (
-            f"Rate how relevant this content is to the research query.\n"
-            f"Query: {query}\n"
-            f"Content: {content_preview}\n\n"
-            f"Reply with ONLY a single number from 0 to 10. Nothing else."
+            f"You are a research librarian deciding whether a source is worth "
+            f"an expert's time.\n\n"
+            f"RESEARCH QUERY: {query}\n\n"
+            f"SOURCE CONTENT:\n{content_preview}\n\n"
+            f"Score this source's relevance and usefulness to the query:\n"
+            f"10 = directly answers the query with specific, verifiable information\n"
+            f"7-9 = highly relevant, contains useful specific details\n"
+            f"4-6 = tangentially related or too general\n"
+            f"1-3 = barely related\n"
+            f"0 = completely irrelevant or spam\n\n"
+            f"Reply with ONLY a single integer 0-10. Nothing else."
         )
         raw = await self.call(prompt, query_id=query_id, estimated_tokens=200)
         return self.parse_float(raw, default=5.0)

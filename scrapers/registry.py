@@ -16,8 +16,14 @@ import logging
 from typing import Optional
 
 from scrapers.hackernews import HackerNewsScraper
-from scrapers.reddit import RedditScraper
 from scrapers.web import WebScraper
+from scrapers.arxiv_scraper import ArxivScraper
+from scrapers.wikipedia_scraper import WikipediaScraper
+from scrapers.ddgs_scraper import DdgsScraper
+from scrapers.openalex_scraper import OpenalexScraper
+from scrapers.open_meteo_scraper import OpenmeteoScraper
+from scrapers.sec_edgar_scraper import SecEdgarScraper
+from scrapers.youtube_scraper import YoutubeScraper
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +41,15 @@ class ScraperRegistry:
         """Instantiate all scrapers. Each one handles its own availability."""
         scraper_classes = {
             "hackernews": HackerNewsScraper,
-            "reddit":      RedditScraper,
             "web":         WebScraper,
+            "arxiv":       ArxivScraper,
+            "wikipedia":   WikipediaScraper,
+            "ddgs":        DdgsScraper,
+            "openalex":    OpenalexScraper,
+            "open_meteo":  OpenmeteoScraper,
+            "sec_edgar":   SecEdgarScraper,
+            "youtube":     YoutubeScraper,
             # ── Add new scrapers here ──────────────────────────────────────
-            # "academic": AcademicScraper,
             # "stackoverflow": StackOverflowScraper,
         }
 

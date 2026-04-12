@@ -11,7 +11,7 @@ orchestrator:
   model: gemini-2.5-flash
   # Orchestrator always uses the first available Gemini key
   # Note: gemini-2.0-flash is deprecated (sunset June 1, 2026); using 2.5-flash
-  keys: [GEMINI_KEY_1, GEMINI_KEY_2]
+  keys: [GEMINI_KEY_1, GEMINI_KEY_2, GEMINI_KEY_3]
 
 providers:
 
@@ -20,12 +20,12 @@ providers:
     rpm_limit: 15
     daily_limit: 1000
     # What this provider is good at — used by orchestrator for planning
-    strengths: [orchestration, long_context, planning, synthesis]
+    strengths: [orchestration, long_context, planning]
     models:
       default: "gemini-2.5-flash"
     # Add GEMINI_KEY_3, GEMINI_KEY_4 here as you create more accounts
     # Updated: gemini-2.0-flash is deprecated (sunset June 1, 2026)
-    keys: [GEMINI_KEY_1, GEMINI_KEY_2]
+    keys: [GEMINI_KEY_1, GEMINI_KEY_2, GEMINI_KEY_3]
 
   groq:
     base_url: "https://api.groq.com/openai/v1"
@@ -42,7 +42,7 @@ providers:
     base_url: "https://openrouter.ai/api/v1"
     rpm_limit: 20
     daily_limit: 200
-    strengths: [reasoning, deep_analysis, research]
+    strengths: [reasoning, deep_analysis, research, synthesis]
     models:
       reasoning: "meta-llama/llama-3.3-70b-instruct"
       general: "meta-llama/llama-3.3-70b-instruct"
@@ -102,12 +102,35 @@ scrapers:
     enabled: true
     results_per_query: 15
     timeout_seconds: 10
-  reddit:
-    enabled: false
-    results_per_query: 10
-    timeout_seconds: 15
-    subreddits: []       # Disabled: user account banned, credentials unavailable
   web:
     enabled: true
     results_per_query: 8
     timeout_seconds: 12
+  arxiv:
+    enabled: true
+    results_per_query: 10
+    timeout_seconds: 15
+  wikipedia:
+    enabled: true
+    results_per_query: 5
+    timeout_seconds: 12
+  ddgs:
+    enabled: true
+    results_per_query: 12
+    timeout_seconds: 10
+  openalex:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 15
+  open_meteo:
+    enabled: true
+    results_per_query: 1
+    timeout_seconds: 10
+  sec_edgar:
+    enabled: true
+    results_per_query: 5
+    timeout_seconds: 20
+  youtube:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 15

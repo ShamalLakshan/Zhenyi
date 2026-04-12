@@ -38,17 +38,28 @@ class SynthesizerAgent(BaseAgent):
         contradictions_block = self._format_contradictions(analyst_outputs)
 
         prompt = (
-            f"You are a research synthesizer. Combine the analyst findings below into a "
-            f"clear, well-structured answer to the query.\n\n"
+            f"You are a senior research synthesizer. Your output will be read "
+            f"by someone who needs comprehensive, expert-level information — not "
+            f"a summary a general chatbot would give.\n\n"
             f"QUERY: {query}\n\n"
             f"ANALYST FINDINGS:\n{findings_block}\n"
         )
         if contradictions_block:
-            prompt += f"\nNOTED CONTRADICTIONS:\n{contradictions_block}\n"
+            prompt += f"CONTRADICTIONS NOTED:\n{contradictions_block}\n"
+        else:
+            prompt += ""
 
         prompt += (
-            f"\nWrite a comprehensive answer. Be specific and cite which analyst found what "
-            f"where relevant. At the very end, on its own line, write:\n"
+            f"\nWrite a comprehensive answer following these rules:\n"
+            f"1. Lead with the most important specific facts directly relevant to the query\n"
+            f"2. Include concrete details: numbers, names, specifications, versions, dates\n"
+            f"3. Structure with clear sections if the answer covers multiple aspects\n"
+            f"4. Explicitly address contradictions — do not smooth them over\n"
+            f"5. State what is well-established vs what is uncertain or contested\n"
+            f"6. Do NOT use phrases like 'based on the findings' or 'the analysts found' "
+            f"— write as if you are the expert, directly answering the question\n"
+            f"7. Minimum 3 paragraphs. Maximum depth the data supports.\n\n"
+            f"End your response with exactly this line:\n"
             f"CONFIDENCE: <decimal 0.0 to 1.0>"
         )
 

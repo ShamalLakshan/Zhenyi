@@ -33,15 +33,26 @@ class AnalystAgent(BaseAgent):
 
         context = self._build_context(chunks)
         prompt = (
-            f"You are a research analyst. Analyse the provided sources for the query below.\n\n"
-            f"QUERY: {query}\n\n"
+            f"You are a specialist research analyst with deep domain expertise. "
+            f"Your job is to extract maximum useful information from these sources.\n\n"
+            f"RESEARCH QUERY: {query}\n\n"
             f"SOURCES:\n{context}\n\n"
-            f"Respond with ONLY valid JSON, no markdown, no preamble:\n"
+            f"Instructions:\n"
+            f"- Extract SPECIFIC facts: names, numbers, versions, dates, part numbers, "
+            f"specifications, prices, authors, institutions — not generalities\n"
+            f"- Note direct quotes or data points from sources where relevant\n"
+            f"- Identify what sources AGREE on and what they CONTRADICT\n"
+            f"- Flag any claims that lack a source or seem uncertain\n"
+            f"- Do NOT pad with filler. Every finding must be a concrete, specific claim.\n\n"
+            f"Respond ONLY with valid JSON, no markdown, no preamble:\n"
             f'{{\n'
-            f'  "confidence": <float 0.0-1.0>,\n'
-            f'  "key_findings": ["finding 1", "finding 2"],\n'
-            f'  "contradictions": ["contradiction if any, else empty list"],\n'
-            f'  "needs_more_info": ["gap if any, else empty list"]\n'
+            f'  "confidence": <float 0.0-1.0 based on source quality and agreement>,\n'
+            f'  "key_findings": [\n'
+            f'    "Specific finding with concrete detail — not a vague summary",\n'
+            f'    "Another specific finding"\n'
+            f'  ],\n'
+            f'  "contradictions": ["Source A says X but source B says Y — be explicit"],\n'
+            f'  "needs_more_info": ["Specific gap that would improve the answer"]\n'
             f'}}'
         )
 

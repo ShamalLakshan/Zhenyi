@@ -31,7 +31,7 @@ it a question, it:
 
 - Dynamically assigns roles (triage, analyst, synthesizer) to whichever LLM
   providers are currently available and have quota remaining
-- Scrapes live data from HackerNews, Reddit, and the web
+- Scrapes live data from HackerNews and the web
 - Runs multiple analysts in parallel on different slices of the scraped data
 - Synthesizes a final answer with confidence score
 
@@ -60,12 +60,12 @@ expensive model**, because it reads fresher data and cross-checks findings.
                                  │  plan: {profile, scrapers, roles}
          ┌───────────────────────┼──────────────────────┐
          │                       │                      │
-    ┌────▼────┐           ┌──────▼──────┐        ┌─────▼──────┐
-    │HN       │           │Reddit       │        │Web          │
-    │Scraper  │           │Scraper      │        │Scraper      │
-    └────┬────┘           └──────┬──────┘        └─────┬──────┘
-         └───────────────────────┼──────────────────────┘
-                                 │  raw chunks
+    ┌────▼────┐           ┌──────▼──────┐        
+    │HN       │           │Web          │       
+    │Scraper  │           │Scraper      │       
+    └────┬────┘           └──────┬──────┘       
+         └───────────────┬───────────────┘
+                         │  raw chunks
                     ┌────────────▼────────────┐
                     │   Triage Agent           │
                     │   Scores 0-10 per chunk  │
@@ -225,7 +225,6 @@ council/
     ├── registry.py             ScraperRegistry. Concurrent execution.
     │                           Isolates individual scraper failures.
     ├── hackernews.py           Algolia HN API. Distills queries to keywords.
-    ├── reddit.py               PRAW. Auto-disables if no credentials.
     └── web.py                  DuckDuckGo Lite. No credentials needed.
 ```
 
@@ -318,11 +317,6 @@ scrapers:
     enabled: true
     results_per_query: 15   # how many HN posts to fetch
     timeout_seconds: 10     # abort if takes longer
-  reddit:
-    enabled: true
-    results_per_query: 10
-    timeout_seconds: 15
-    subreddits: []          # empty = search all Reddit; ["python","rust"] = specific subs
   web:
     enabled: true
     results_per_query: 8
@@ -349,11 +343,6 @@ COHERE_KEY_1=...
 
 # GitHub — starts with "ghp_" or "github_pat_"
 GH_KEY_1=ghp_...
-
-# Reddit (optional)
-REDDIT_CLIENT_ID=...
-REDDIT_CLIENT_SECRET=...
-REDDIT_USER_AGENT=council_bot/1.0
 ```
 
 ---
@@ -419,7 +408,6 @@ from scrapers.my_scraper import MyScraper
 
 scraper_classes = {
     "hackernews": HackerNewsScraper,
-    "reddit":     RedditScraper,
     "web":        WebScraper,
     "my_scraper": MyScraper,          # ← add here
 }
@@ -598,12 +586,6 @@ nothing regardless of how the query is phrased.
 no coverage exists, the pipeline continues with whatever other scrapers found.
 Web scraper is more likely to find niche content.
 
-### Reddit requires app registration
-**Problem:** PRAW needs OAuth credentials.
-**Workaround:** Reddit scraper auto-disables if credentials are missing. The
-system works without Reddit. To enable: create a "script" app at
-`reddit.com/prefs/apps`, get client_id and client_secret, add to `.env`.
-
 ### OpenRouter free models get rotated
 **Problem:** Models with `:free` suffix may be removed or throttled without
 notice.
@@ -648,7 +630,6 @@ council> /quit            Exit
 
 ── SCRAPER STATUS ──────────────────────────────────────────
   hackernews       ✓ available
-  reddit           ✗ unavailable [disabled]
   web              ✓ available
 ```
 

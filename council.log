@@ -60,3 +60,30 @@ INFO [scrapers.registry] [registry] hackernews: enabled
 INFO [scrapers.registry] [registry] reddit: disabled
 INFO [scrapers.registry] [registry] web: enabled
 INFO [core.pipeline] [7375a076] Starting pipeline: give me information on Crinacle RED v2 IEMs
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] reddit: disabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [37b552b7] Starting pipeline: give me information on the current market for high powered high end audiophile d
+INFO [scrapers.registry] [registry] Skipping unavailable scrapers: {'reddit'}
+WARNING [scrapers.base_scraper] [web] Failed: DDG returned status 202
+INFO [scrapers.registry] [registry] web: 0 chunks
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [core.pipeline] [94cb3a88] Starting pipeline: give me information on the current market for high powered high end audiophile d
+INFO [scrapers.registry] [registry] web: 1 chunks
+WARNING [core.pipeline] [94cb3a88] Triage removed all chunks — keeping top 3
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [scrapers.registry] [registry] arxiv: enabled
+INFO [scrapers.registry] [registry] wikipedia: enabled
+INFO [scrapers.registry] [registry] ddgs: enabled
+INFO [scrapers.registry] [registry] openalex: enabled
+INFO [scrapers.registry] [registry] open_meteo: enabled
+INFO [scrapers.registry] [registry] sec_edgar: enabled
+INFO [scrapers.registry] [registry] youtube: enabled
+INFO [core.pipeline] [ef7025a1] Starting pipeline: give me academic information on possible categorization of srilankan musical era
+INFO [scrapers.registry] [registry] web: 1 chunks
+INFO [scrapers.registry] [registry] wikipedia: 0 chunks
+INFO [scrapers.registry] [registry] arxiv: 10 chunks
+INFO [scrapers.registry] [registry] openalex: 0 chunks
+WARNING [core.pipeline] [ef7025a1] Triage removed all chunks — keeping top 3
