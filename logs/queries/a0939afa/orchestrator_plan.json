@@ -1,0 +1,30 @@
+{
+  "reasoning": "The query requires deep research into religious doctrines, theological justifications, and their societal implications across multiple creator-based religions, with a specific focus on Catholicism, necessitating multiple analysts and diverse scraping tools for comprehensive information gathering and synthesis.",
+  "profile": "deep_research",
+  "scrapers": [
+    "wikipedia",
+    "web",
+    "ddgs"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "analyst_1": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776492266.281851
+}

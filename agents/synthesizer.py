@@ -23,10 +23,12 @@ class SynthesizerAgent(BaseAgent):
         query: str,
         analyst_outputs: list[dict],
         query_id: str = "",
+        log_ctx=None,
     ) -> dict:
         """
         Merge analyst findings into a final answer with confidence score.
         Returns a dict with 'answer' and 'confidence' always set.
+        log_ctx: optional logging context for debug logging
         """
         if not analyst_outputs:
             return {
@@ -65,6 +67,18 @@ class SynthesizerAgent(BaseAgent):
 
         raw = await self.call(prompt, query_id=query_id, estimated_tokens=1200)
 
+        # Log synthesis reasoning (non-blocking)
+        if log_ctx and query_id:
+            try:
+                await log_ctx.log_agent_reasoning(
+                    self.agent_id, "synthesizer", 1,
+                    f"Synthesizing {len(analyst_outputs)} analyst outputs",
+                    "Generated final answer",
+                    len(analyst_outputs)
+                )
+            except Exception as e:
+                logger.debug(f"[{self.agent_id}] Log synthesis error (non-fatal): {e}")
+
         if not raw:
             # Build minimal answer from raw findings
             fallback = "\n".join(
@@ -73,7 +87,22 @@ class SynthesizerAgent(BaseAgent):
             ) or "No findings available."
             return {"answer": fallback, "confidence": 0.3}
 
-        return self._extract_answer_and_confidence(raw)
+        result = self._extract_answer_and_confidence(raw)
+        
+        # Log final result (non-blocking)
+        if log_ctx and query_id:
+            try:
+                await log_ctx.log_agent_reasoning(
+                    self.agent_id, "synthesizer", 2,
+                    f"Extracted answer with confidence score",
+                    "Synthesis complete",
+                    0,
+                    result.get("confidence", 0.5)
+                )
+            except Exception as e:
+                logger.debug(f"[{self.agent_id}] Log result error (non-fatal): {e}")
+        
+        return result
 
     def _format_findings(self, outputs: list[dict]) -> str:
         lines = []

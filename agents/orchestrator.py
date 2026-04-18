@@ -90,11 +90,12 @@ class OrchestratorAgent:
     def __init__(self, pool: KeyPool):
         self.pool = pool
 
-    async def plan(self, query: str, query_id: str) -> dict:
+    async def plan(self, query: str, query_id: str, log_ctx=None) -> dict:
         """
         Produce a full execution plan for this query.
         Returns a dict with: profile, scrapers, analyst_count, roles, reasoning.
         Never raises — falls back to a safe plan on any error.
+        log_ctx: optional logging context for debug logging
         """
         try:
             api_key, model, key_state = self.pool.get_orchestrator_key()
@@ -102,6 +103,20 @@ class OrchestratorAgent:
             logger.error("No orchestrator keys available — using fallback plan")
             plan = self._fallback_plan(snapshot=None, query=query)
             await state_store.log_thought(query_id, "orchestrator", "fallback: no keys")
+            
+            # Log plan to debug context (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_orchestrator_plan(
+                        "No orchestrator keys available",
+                        plan.get("profile", "research"),
+                        plan.get("scrapers", []),
+                        plan.get("roles", {}),
+                        fallback_used=True
+                    )
+                except Exception as e:
+                    logger.debug(f"Log orchestrator plan error (non-fatal): {e}")
+            
             return plan
 
         snapshot = self.pool.get_capabilities_snapshot()
@@ -109,6 +124,20 @@ class OrchestratorAgent:
             logger.error("No providers available in snapshot — using fallback plan")
             plan = self._fallback_plan(snapshot=None, query=query)
             await state_store.log_thought(query_id, "orchestrator", "fallback: empty snapshot")
+            
+            # Log plan to debug context (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_orchestrator_plan(
+                        "No providers available in snapshot",
+                        plan.get("profile", "research"),
+                        plan.get("scrapers", []),
+                        plan.get("roles", {}),
+                        fallback_used=True
+                    )
+                except Exception as e:
+                    logger.debug(f"Log orchestrator plan error (non-fatal): {e}")
+            
             return plan
 
         prompt = self._build_prompt(query, snapshot)
@@ -142,6 +171,21 @@ class OrchestratorAgent:
                 query_id, "orchestrator",
                 f"fallback: {'rate_limit' if is_rate_limit else str(e)[:80]}"
             )
+            
+            # Log fallback plan to debug context (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_orchestrator_plan(
+                        f"Orchestrator error: {'rate_limit' if is_rate_limit else str(e)[:80]}",
+                        plan.get("profile", "research"),
+                        plan.get("scrapers", []),
+                        plan.get("roles", {}),
+                        fallback_used=True,
+                        constraints=f"Error: {error_str[:200]}"
+                    )
+                except Exception as log_e:
+                    logger.debug(f"Log orchestrator plan error (non-fatal): {log_e}")
+            
             return plan
 
         plan = self._parse_plan(raw, snapshot)
@@ -152,6 +196,20 @@ class OrchestratorAgent:
             f"profile={plan['profile']} scrapers={plan['scrapers']} "
             f"analysts={plan['analyst_count']} | {plan.get('reasoning', '')}"
         )
+        
+        # Log successful plan to debug context (non-blocking)
+        if log_ctx and query_id:
+            try:
+                await log_ctx.log_orchestrator_plan(
+                    plan.get("reasoning", "Plan generated successfully"),
+                    plan.get("profile", "research"),
+                    plan.get("scrapers", []),
+                    plan.get("roles", {}),
+                    fallback_used=False
+                )
+            except Exception as e:
+                logger.debug(f"Log orchestrator plan error (non-fatal): {e}")
+        
         return plan
 
     def _build_prompt(self, query: str, snapshot: dict) -> str:

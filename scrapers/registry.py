@@ -63,11 +63,13 @@ class ScraperRegistry:
             except Exception as e:
                 logger.error(f"[registry] Failed to init {name}: {e}")
 
-    async def run(self, names: list[str], query: str) -> list[dict]:
+    async def run(self, names: list[str], query: str, log_ctx=None, query_id: str = "") -> list[dict]:
         """
         Run the requested scrapers concurrently.
         Each scraper is isolated — one failure does not affect others.
         Returns all chunks combined.
+        log_ctx: optional logging context for debug logging
+        query_id: optional query ID for logging
         """
         if not names:
             return []
@@ -86,7 +88,7 @@ class ScraperRegistry:
             return []
 
         tasks = {
-            name: self._scrapers[name].scrape(query)
+            name: self._scrapers[name].scrape(query, query_id=query_id)
             for name in available
         }
 

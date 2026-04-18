@@ -23,6 +23,11 @@ from core import state_store
 
 logger = logging.getLogger(__name__)
 
+# Lazy import to avoid circular dependency
+def get_log_context():
+    from core.pipeline import get_current_log_context
+    return get_current_log_context()
+
 
 class BaseAgent:
     """
@@ -60,8 +65,11 @@ class BaseAgent:
         """
         Call the LLM. Retries up to max_retries times with different keys.
         Returns empty string on total failure — never raises.
+        Logs full request/response payloads to debug context if available.
         """
         last_error = ""
+        log_ctx = get_log_context()
+        
         for attempt in range(max_retries + 1):
             key = self.pool.pick(self.provider)
 
@@ -81,9 +89,39 @@ class BaseAgent:
 
             t0 = time.time()
             try:
+                # Log request (if logging context available, non-blocking)
+                request_dict = {
+                    "model": self.model,
+                    "provider": self.provider,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 1500,
+                    "temperature": 0.3,
+                }
+                
+                if log_ctx and query_id:
+                    try:
+                        await log_ctx.log_api_request(
+                            self.agent_id, self.provider, self.model, attempt,
+                            request_dict, estimated_tokens=estimated_tokens
+                        )
+                    except Exception as e:
+                        logger.debug(f"[{self.agent_id}] Log request error (non-fatal): {e}")
+                
                 result = await self._call_provider(key, prompt)
                 latency = (time.time() - t0) * 1000
                 key.record_usage(estimated_tokens)
+
+                # Log response (if logging context available, non-blocking)
+                if log_ctx and query_id:
+                    try:
+                        await log_ctx.log_api_response(
+                            self.agent_id, self.provider, self.model, attempt,
+                            response_dict={"content": result[:500]},
+                            response_code=200, latency_ms=latency,
+                            actual_tokens_out=len(result.split()) * 1.3  # Rough estimate
+                        )
+                    except Exception as e:
+                        logger.debug(f"[{self.agent_id}] Log response error (non-fatal): {e}")
 
                 if query_id:
                     await state_store.log_agent_output(
@@ -105,6 +143,18 @@ class BaseAgent:
                     f"[{self.agent_id}] attempt {attempt+1}/{max_retries+1} "
                     f"failed ({self.provider}): {last_error[:120]}"
                 )
+                
+                # Log error response (if logging context available, non-blocking)
+                if log_ctx and query_id:
+                    try:
+                        await log_ctx.log_api_response(
+                            self.agent_id, self.provider, self.model, attempt,
+                            response_code=500, latency_ms=latency,
+                            error_message=last_error[:500]
+                        )
+                    except Exception as e:
+                        logger.debug(f"[{self.agent_id}] Log error response failed (non-fatal): {e}")
+                
                 if attempt < max_retries:
                     await asyncio.sleep(2 ** attempt)
 

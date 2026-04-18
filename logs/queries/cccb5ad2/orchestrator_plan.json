@@ -1,0 +1,29 @@
+{
+  "reasoning": "The query demands a deep theological and philosophical analysis of creator-based religions, with a specific focus on Catholicism, regarding complex concepts like birthplace, rights, and socio-economic environment, necessitating extensive research and detailed argumentation from multiple analytical perspectives.",
+  "profile": "deep_research",
+  "scrapers": [
+    "web",
+    "wikipedia"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "analyst_1": {
+      "provider": "gemini",
+      "model": "gemini-2.5-flash"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776492518.9046214
+}

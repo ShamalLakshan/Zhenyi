@@ -1,0 +1,10 @@
+- [ ] LLM key management in the ui
+- [ ] LLM and scraper usage percentage on the query display
+- [ ] single query persistence and chat CRUD operation for new chats and all.
+- [ ] pause in the middle of a query (graceful handling)
+- [ ] scrapers as plug and play module
+- [ ] logs on the DB??????
+- [ ] outpt MD rendering
+- [ ] mermiad / obsidian canvas output
+- [ ] endpoint doc
+- [ ] uvicorn server:app --reload --host 0.0.0.0 --port 8000

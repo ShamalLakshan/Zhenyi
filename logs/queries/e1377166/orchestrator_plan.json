@@ -1,0 +1,29 @@
+{
+  "reasoning": "The query requires deep research into religious doctrines, specifically arguments from creator-based religions and Catholicism, concerning complex ethical and societal issues like birthplace, birthrights, and socio-economic/political environments, necessitating multiple analysts and web scraping for comprehensive understanding.",
+  "profile": "deep_research",
+  "scrapers": [
+    "wikipedia",
+    "web"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "analyst_1": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776491825.0352616
+}

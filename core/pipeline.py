@@ -21,9 +21,14 @@ import asyncio
 import logging
 import time
 import uuid
+import json
+from pathlib import Path
+from contextlib import asynccontextmanager
 
 from core.key_pool import KeyPool
 from core import state_store
+from core import debug_store
+from core.redaction import redact_request_payload, redact_response_payload, safe_json_dumps
 from scrapers.registry import ScraperRegistry
 from agents.orchestrator import OrchestratorAgent
 from agents.triage import TriageAgent
@@ -31,6 +36,216 @@ from agents.analyst import AnalystAgent
 from agents.synthesizer import SynthesizerAgent
 
 logger = logging.getLogger(__name__)
+
+# Global log context (thread-local would be better in production)
+_current_log_context = None
+
+
+class LogContext:
+    """
+    Logging context for a query execution.
+    Collects all logs during a query run (scrapers, models, reasoning).
+    On successful completion, batches all logs to DB and writes files.
+    OnFailure, minimal error info is logged.
+    """
+    
+    def __init__(self, query_id: str, query_text: str):
+        self.query_id = query_id
+        self.query_text = query_text
+        self.log_root = Path("logs/queries") / query_id
+        self.log_root.mkdir(parents=True, exist_ok=True)
+        
+        # Subdirectories
+        (self.log_root / "api_requests").mkdir(exist_ok=True)
+        (self.log_root / "api_responses").mkdir(exist_ok=True)
+        (self.log_root / "scraper_outputs").mkdir(exist_ok=True)
+        (self.log_root / "agent_reasoning").mkdir(exist_ok=True)
+        
+        self.is_success = False
+        logger.debug(f"[{query_id}] Log context initialized at {self.log_root}")
+    
+    async def log_api_request(
+        self, agent_id: str, provider: str, model: str, attempt: int,
+        request_dict: dict, estimated_tokens: int = 0
+    ) -> str:
+        """
+        Log full API request payload (redacted).
+        Returns path to stored file.
+        """
+        try:
+            redacted = redact_request_payload(request_dict)
+            filename = f"{provider}_{model}_{attempt}.json"
+            filepath = self.log_root / "api_requests" / filename
+            
+            with open(filepath, "w") as f:
+                json.dump({
+                    "agent_id": agent_id,
+                    "provider": provider,
+                    "model": model,
+                    "attempt": attempt,
+                    "timestamp": time.time(),
+                    "payload": redacted
+                }, f, indent=2)
+            
+            # Also log to DB (deferred batching)
+            await debug_store.log_api_request(
+                self.query_id, agent_id, provider, model, attempt,
+                str(filepath.relative_to(Path.cwd())),
+                headers_redacted=True, body_redacted=True,
+                estimated_tokens=estimated_tokens
+            )
+            
+            return str(filepath)
+        except Exception as e:
+            logger.debug(f"log_api_request error (non-fatal): {e}")
+            return None
+    
+    async def log_api_response(
+        self, agent_id: str, provider: str, model: str, attempt: int,
+        response_dict: dict = None, response_code: int = 200,
+        actual_tokens_in: int = 0, actual_tokens_out: int = 0,
+        latency_ms: float = 0, error_message: str = None
+    ) -> str:
+        """
+        Log full API response payload (redacted).
+        Returns path to stored file.
+        """
+        try:
+            if response_dict:
+                redacted = redact_response_payload(response_dict)
+                filename = f"{provider}_{model}_{attempt}.json"
+                filepath = self.log_root / "api_responses" / filename
+                
+                with open(filepath, "w") as f:
+                    json.dump({
+                        "agent_id": agent_id,
+                        "provider": provider,
+                        "model": model,
+                        "attempt": attempt,
+                        "timestamp": time.time(),
+                        "response_code": response_code,
+                        "payload": redacted
+                    }, f, indent=2)
+            else:
+                filepath = None
+            
+            # Also log to DB (deferred batching)
+            await debug_store.log_api_response(
+                self.query_id, agent_id, provider, model, attempt,
+                str(filepath.relative_to(Path.cwd())) if filepath else None,
+                response_code=response_code, response_redacted=True,
+                actual_tokens_in=actual_tokens_in, actual_tokens_out=actual_tokens_out,
+                latency_ms=latency_ms, error_message=error_message or ""
+            )
+            
+            return str(filepath) if filepath else None
+        except Exception as e:
+            logger.debug(f"log_api_response error (non-fatal): {e}")
+            return None
+    
+    async def log_scraper(
+        self, scraper_name: str, config: dict, start_time: float,
+        end_time: float, chunks_returned: int = 0,
+        raw_output: dict = None, error_message: str = None,
+        circuit_state: str = "closed"
+    ):
+        """Log scraper invocation and output."""
+        try:
+            from core.redaction import redact_json_payload
+            
+            # Save config (redacted)
+            config_redacted = redact_json_payload(config)
+            config_file = self.log_root / "scraper_outputs" / f"{scraper_name}_config.json"
+            with open(config_file, "w") as f:
+                json.dump(config_redacted, f, indent=2)
+            
+            # Save raw output if provided
+            output_file = None
+            if raw_output:
+                output_file = self.log_root / "scraper_outputs" / f"{scraper_name}_output.json"
+                with open(output_file, "w") as f:
+                    json.dump(raw_output if isinstance(raw_output, dict) else {"output": raw_output}, f, indent=2)
+            
+            # Log to DB
+            await debug_store.log_scraper_invocation(
+                self.query_id, scraper_name,
+                str(config_file.relative_to(Path.cwd())),
+                config_redacted=True,
+                start_time=start_time, end_time=end_time,
+                chunks_returned=chunks_returned,
+                raw_output_path=str(output_file.relative_to(Path.cwd())) if output_file else "",
+                error_message=error_message or "",
+                circuit_breaker_state=circuit_state
+            )
+        except Exception as e:
+            logger.debug(f"log_scraper error (non-fatal): {e}")
+    
+    async def log_orchestrator_plan(
+        self, reasoning: str, profile: str, scrapers: list,
+        models: dict, fallback_used: bool = False, constraints: str = ""
+    ):
+        """Log orchestrator planning decisions."""
+        try:
+            plan_file = self.log_root / "orchestrator_plan.json"
+            with open(plan_file, "w") as f:
+                json.dump({
+                    "reasoning": reasoning,
+                    "profile": profile,
+                    "scrapers": scrapers,
+                    "models": models,
+                    "fallback_used": fallback_used,
+                    "constraints": constraints,
+                    "timestamp": time.time()
+                }, f, indent=2)
+            
+            await debug_store.log_orchestrator_plan(
+                self.query_id, reasoning, profile, scrapers, models,
+                fallback_used=fallback_used, constraints_applied=constraints,
+                decision_tree_path=str(plan_file.relative_to(Path.cwd()))
+            )
+        except Exception as e:
+            logger.debug(f"log_orchestrator_plan error (non-fatal): {e}")
+    
+    async def log_agent_reasoning(
+        self, agent_id: str, agent_role: str, step: int,
+        reasoning: str, decision: str = "", chunks_used: int = 0, confidence: float = 0.0
+    ):
+        """Log agent reasoning step."""
+        try:
+            await debug_store.log_agent_reasoning(
+                self.query_id, agent_id, agent_role, step,
+                reasoning, decision_made=decision,
+                source_chunks_used=chunks_used, confidence=confidence
+            )
+        except Exception as e:
+            logger.debug(f"log_agent_reasoning error (non-fatal): {e}")
+    
+    async def batch_mark_success(self):
+        """Mark all logs as batch-logged (called on query success)."""
+        self.is_success = True
+        try:
+            await debug_store.batch_mark_logged(self.query_id)
+            logger.debug(f"[{self.query_id}] Logs batch-marked as complete")
+        except Exception as e:
+            logger.debug(f"batch_mark_success error (non-fatal): {e}")
+
+
+@asynccontextmanager
+async def create_log_context(query_id: str, query_text: str):
+    """Context manager for query logging. Usage: async with create_log_context(...) as ctx:"""
+    global _current_log_context
+    ctx = LogContext(query_id, query_text)
+    old_ctx = _current_log_context
+    _current_log_context = ctx
+    try:
+        yield ctx
+    finally:
+        _current_log_context = old_ctx
+
+
+def get_current_log_context() -> LogContext:
+    """Get the current logging context (if any)."""
+    return _current_log_context
 
 
 def _make_agent_from_role(role_cfg: dict, role_name: str, pool: KeyPool):
@@ -60,195 +275,217 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
     """
     Execute the full research pipeline for a query.
     Always returns a dict with: query_id, profile, answer, confidence, sources, plan.
+    
+    Logs all operations (scrapers, models, reasoning) if logging is enabled.
+    On successful completion, all logs are batch-written to DB and files.
     """
     query_id = str(uuid.uuid4())[:8]
     t_start = time.time()
-
-    logger.info(f"[{query_id}] Starting pipeline: {query[:80]}")
-    await state_store.log_thought(query_id, "start", f"query: {query}")
-
-    # ── Stage 1: Orchestrator Planning ────────────────────────────────────────
-    print(f"\n[{query_id}] {query[:70]}")
-    print("  [1/5] Planning...")
-
+    
+    # Initialize debug tables on first run
     try:
-        orchestrator = OrchestratorAgent(pool)
-        plan = await orchestrator.plan(query, query_id)
+        await debug_store.init_debug_tables()
     except Exception as e:
-        logger.error(f"[{query_id}] Orchestrator failed: {e}")
-        plan = {
-            "profile": "research",
-            "scrapers": ["hackernews"],
-            "analyst_count": 1,
-            "roles": {},
-            "reasoning": f"Orchestrator failed: {e}",
-        }
+        logger.debug(f"Debug tables init (non-fatal): {e}")
 
-    profile     = plan.get("profile", "research")
-    roles       = plan.get("roles", {})
-    scrapers    = plan.get("scrapers", ["hackernews"])
-    reasoning   = plan.get("reasoning", "")
+    # Wrap entire pipeline in logging context for batching
+    async with create_log_context(query_id, query) as log_ctx:
+        try:
+            logger.info(f"[{query_id}] Starting pipeline: {query[:80]}")
+            await state_store.log_thought(query_id, "start", f"query: {query}")
 
-    print(f"       profile={profile} | scrapers={scrapers}")
-    print(f"       reason: {reasoning}")
+            # ── Stage 1: Orchestrator Planning ────────────────────────────────────────
+            print(f"\n[{query_id}] {query[:70]}")
+            print("  [1/5] Planning...")
 
-    # ── Simple factual short-circuit ──────────────────────────────────────────
-    if profile == "simple_factual":
-        print("  [2-4/5] Skipped (simple factual)")
-        analyst_cfg = roles.get("analyst_0", {})
-        if not analyst_cfg:
-            analyst_cfg = _pick_fallback_role(pool, "analysis")
+            try:
+                orchestrator = OrchestratorAgent(pool)
+                plan = await orchestrator.plan(query, query_id, log_ctx)
+            except Exception as e:
+                logger.error(f"[{query_id}] Orchestrator failed: {e}")
+                plan = {
+                    "profile": "research",
+                    "scrapers": ["hackernews"],
+                    "analyst_count": 1,
+                    "roles": {},
+                    "reasoning": f"Orchestrator failed: {e}",
+                }
 
-        agent = _make_agent_from_role(analyst_cfg, "analyst_0", pool)
-        raw = await agent.call(
-            f"Answer this question directly and accurately:\n\n{query}",
-            query_id=query_id,
-        )
-        answer = raw or "Could not generate an answer."
-        duration = (time.time() - t_start) * 1000
-        await state_store.save_query_result(
-            query_id, query, profile, plan, answer, 0.85, duration
-        )
-        await state_store.log_thought(query_id, "done", "simple_factual direct answer")
-        return {
-            "query_id": query_id,
-            "profile": profile,
-            "answer": answer,
-            "confidence": 0.85,
-            "sources": [],
-            "plan": plan,
-            "duration_ms": duration,
-        }
+            profile     = plan.get("profile", "research")
+            roles       = plan.get("roles", {})
+            scrapers    = plan.get("scrapers", ["hackernews"])
+            reasoning   = plan.get("reasoning", "")
 
-    # ── Stage 2: Scraping ─────────────────────────────────────────────────────
-    print(f"  [2/5] Scraping {scrapers}...")
-    await state_store.log_thought(query_id, "scrape_start", str(scrapers))
+            print(f"       profile={profile} | scrapers={scrapers}")
+            print(f"       reason: {reasoning}")
 
-    try:
-        chunks = await registry.run(scrapers, query)
-    except Exception as e:
-        logger.error(f"[{query_id}] Scraper registry error: {e}")
-        chunks = []
+            # ── Simple factual short-circuit ──────────────────────────────────────────
+            if profile == "simple_factual":
+                print("  [2-4/5] Skipped (simple factual)")
+                analyst_cfg = roles.get("analyst_0", {})
+                if not analyst_cfg:
+                    analyst_cfg = _pick_fallback_role(pool, "analysis")
 
-    max_chunks = pool.get_threshold("max_chunks", 20)
-    chunks = chunks[:max_chunks]
-    print(f"         got {len(chunks)} raw chunks")
-    await state_store.log_thought(query_id, "scraped", f"{len(chunks)} chunks")
+                agent = _make_agent_from_role(analyst_cfg, "analyst_0", pool)
+                raw = await agent.call(
+                    f"Answer this question directly and accurately:\n\n{query}",
+                    query_id=query_id,
+                )
+                answer = raw or "Could not generate an answer."
+                duration = (time.time() - t_start) * 1000
+                await state_store.save_query_result(
+                    query_id, query, profile, plan, answer, 0.85, duration
+                )
+                await state_store.log_thought(query_id, "done", "simple_factual direct answer")
+                await log_ctx.batch_mark_success()
+                return {
+                    "query_id": query_id,
+                    "profile": profile,
+                    "answer": answer,
+                    "confidence": 0.85,
+                    "sources": [],
+                    "plan": plan,
+                    "duration_ms": duration,
+                }
 
-    if not chunks:
-        await state_store.log_thought(query_id, "done", "no data from scrapers")
-        return _empty_result(query_id, profile, plan,
-                             "No data found from any scraper.", t_start)
+            # ── Stage 2: Scraping ─────────────────────────────────────────────────────
+            print(f"  [2/5] Scraping {scrapers}...")
+            await state_store.log_thought(query_id, "scrape_start", str(scrapers))
 
-    # ── Stage 3: Triage ───────────────────────────────────────────────────────
-    print("  [3/5] Triaging...")
-    triage_cfg = roles.get("triage")
-    if not triage_cfg:
-        triage_cfg = _pick_fallback_role(pool, "speed")
+            try:
+                chunks = await registry.run(scrapers, query, log_ctx=log_ctx, query_id=query_id)
+            except Exception as e:
+                logger.error(f"[{query_id}] Scraper registry error: {e}")
+                chunks = []
 
-    threshold = pool.get_threshold("relevance_min_score", 6)
+            max_chunks = pool.get_threshold("max_chunks", 20)
+            chunks = chunks[:max_chunks]
+            print(f"         got {len(chunks)} raw chunks")
+            await state_store.log_thought(query_id, "scraped", f"{len(chunks)} chunks")
 
-    try:
-        triage = _make_agent_from_role(triage_cfg, "triage", pool)
-        scored = await triage.score_chunks(query, chunks, threshold, query_id)
-    except Exception as e:
-        logger.error(f"[{query_id}] Triage error: {e}")
-        scored = chunks  # pass all through on triage failure
+            if not chunks:
+                await state_store.log_thought(query_id, "done", "no data from scrapers")
+                await log_ctx.batch_mark_success()
+                return _empty_result(query_id, profile, plan,
+                                     "No data found from any scraper.", t_start)
 
-    # Safety net — if triage filtered everything out, keep top chunks
-    if not scored:
-        logger.warning(f"[{query_id}] Triage removed all chunks — keeping top 3")
-        scored = chunks[:3]
+            # ── Stage 3: Triage ───────────────────────────────────────────────────────
+            print("  [3/5] Triaging...")
+            triage_cfg = roles.get("triage")
+            if not triage_cfg:
+                triage_cfg = _pick_fallback_role(pool, "speed")
 
-    await state_store.save_chunks(query_id, scored)
-    await state_store.log_thought(query_id, "triage", f"kept {len(scored)}/{len(chunks)}")
-    print(f"         kept {len(scored)}/{len(chunks)}")
+            threshold = pool.get_threshold("relevance_min_score", 6)
 
-    # ── Stage 4: Parallel Analysis ────────────────────────────────────────────
-    analyst_keys = sorted(
-        [k for k in roles if k.startswith("analyst_")]
-    )
-    if not analyst_keys:
-        analyst_keys = ["analyst_0"]
+            try:
+                triage = _make_agent_from_role(triage_cfg, "triage", pool)
+                scored = await triage.score_chunks(query, chunks, threshold, query_id)
+            except Exception as e:
+                logger.error(f"[{query_id}] Triage error: {e}")
+                scored = chunks  # pass all through on triage failure
 
-    analyst_count = len(analyst_keys)
-    print(f"  [4/5] Running {analyst_count} analyst(s) in parallel...")
-    await state_store.log_thought(query_id, "analyse_start", f"{analyst_count} analysts")
+            # Safety net — if triage filtered everything out, keep top chunks
+            if not scored:
+                logger.warning(f"[{query_id}] Triage removed all chunks — keeping top 3")
+                scored = chunks[:3]
 
-    # Distribute chunks evenly across analysts
-    chunk_slices = _split_chunks(scored, analyst_count)
+            await state_store.save_chunks(query_id, scored)
+            await state_store.log_thought(query_id, "triage", f"kept {len(scored)}/{len(chunks)}")
+            print(f"         kept {len(scored)}/{len(chunks)}")
 
-    analyst_tasks = []
-    for i, key in enumerate(analyst_keys):
-        role_cfg = roles.get(key)
-        if not role_cfg:
-            role_cfg = _pick_fallback_role(pool, "analysis")
-        agent = _make_agent_from_role(role_cfg, key, pool)
-        chunk_slice = chunk_slices[i] if i < len(chunk_slices) else scored
-        analyst_tasks.append(agent.analyse(query, chunk_slice, query_id))
+            # ── Stage 4: Parallel Analysis ────────────────────────────────────────────
+            analyst_keys = sorted(
+                [k for k in roles if k.startswith("analyst_")]
+            )
+            if not analyst_keys:
+                analyst_keys = ["analyst_0"]
 
-    raw_results = await asyncio.gather(*analyst_tasks, return_exceptions=True)
+            analyst_count = len(analyst_keys)
+            print(f"  [4/5] Running {analyst_count} analyst(s) in parallel...")
+            await state_store.log_thought(query_id, "analyse_start", f"{analyst_count} analysts")
 
-    analyst_outputs = []
-    for i, result in enumerate(raw_results):
-        if isinstance(result, Exception):
-            logger.error(f"[{query_id}] analyst_{i} raised: {result}")
-        elif isinstance(result, dict):
-            analyst_outputs.append(result)
+            # Distribute chunks evenly across analysts
+            chunk_slices = _split_chunks(scored, analyst_count)
 
-    print(f"         {len(analyst_outputs)}/{analyst_count} analysts returned")
-    await state_store.log_thought(
-        query_id, "analysed", f"{len(analyst_outputs)} outputs"
-    )
+            analyst_tasks = []
+            for i, key in enumerate(analyst_keys):
+                role_cfg = roles.get(key)
+                if not role_cfg:
+                    role_cfg = _pick_fallback_role(pool, "analysis")
+                agent = _make_agent_from_role(role_cfg, key, pool)
+                chunk_slice = chunk_slices[i] if i < len(chunk_slices) else scored
+                analyst_tasks.append(agent.analyse(query, chunk_slice, query_id, log_ctx))
 
-    if not analyst_outputs:
-        return _empty_result(
-            query_id, profile, plan,
-            "All analysts failed to return results.", t_start
-        )
+            raw_results = await asyncio.gather(*analyst_tasks, return_exceptions=True)
 
-    # ── Stage 5: Synthesis ────────────────────────────────────────────────────
-    print("  [5/5] Synthesizing...")
-    synth_cfg = roles.get("synthesizer")
-    if not synth_cfg:
-        synth_cfg = _pick_fallback_role(pool, "synthesis")
+            analyst_outputs = []
+            for i, result in enumerate(raw_results):
+                if isinstance(result, Exception):
+                    logger.error(f"[{query_id}] analyst_{i} raised: {result}")
+                elif isinstance(result, dict):
+                    analyst_outputs.append(result)
 
-    try:
-        synth = _make_agent_from_role(synth_cfg, "synthesizer", pool)
-        final = await synth.synthesize(query, analyst_outputs, query_id)
-    except Exception as e:
-        logger.error(f"[{query_id}] Synthesizer error: {e}")
-        # Build answer from raw findings as fallback
-        findings = [
-            f for out in analyst_outputs
-            for f in out.get("key_findings", [])
-        ]
-        final = {
-            "answer": "\n".join(findings) or "Synthesis failed.",
-            "confidence": 0.3,
-        }
+            print(f"         {len(analyst_outputs)}/{analyst_count} analysts returned")
+            await state_store.log_thought(
+                query_id, "analysed", f"{len(analyst_outputs)} outputs"
+            )
 
-    sources = list({c.get("url", "") for c in scored if c.get("url")})
-    duration = (time.time() - t_start) * 1000
+            if not analyst_outputs:
+                await log_ctx.batch_mark_success()
+                return _empty_result(
+                    query_id, profile, plan,
+                    "All analysts failed to return results.", t_start
+                )
 
-    await state_store.log_thought(
-        query_id, "done",
-        f"confidence={final['confidence']:.2f} duration={duration:.0f}ms"
-    )
-    await state_store.save_query_result(
-        query_id, query, profile, plan,
-        final["answer"], final["confidence"], duration
-    )
+            # ── Stage 5: Synthesis ────────────────────────────────────────────────────
+            print("  [5/5] Synthesizing...")
+            synth_cfg = roles.get("synthesizer")
+            if not synth_cfg:
+                synth_cfg = _pick_fallback_role(pool, "synthesis")
 
-    return {
-        "query_id":   query_id,
-        "profile":    profile,
-        "answer":     final["answer"],
-        "confidence": final["confidence"],
-        "sources":    sources[:10],
-        "plan":       plan,
-        "duration_ms": duration,
-    }
+            try:
+                synth = _make_agent_from_role(synth_cfg, "synthesizer", pool)
+                final = await synth.synthesize(query, analyst_outputs, query_id, log_ctx)
+            except Exception as e:
+                logger.error(f"[{query_id}] Synthesizer error: {e}")
+                # Build answer from raw findings as fallback
+                findings = [
+                    f for out in analyst_outputs
+                    for f in out.get("key_findings", [])
+                ]
+                final = {
+                    "answer": "\n".join(findings) or "Synthesis failed.",
+                    "confidence": 0.3,
+                }
+
+            sources = list({c.get("url", "") for c in scored if c.get("url")})
+            duration = (time.time() - t_start) * 1000
+
+            await state_store.log_thought(
+                query_id, "done",
+                f"confidence={final['confidence']:.2f} duration={duration:.0f}ms"
+            )
+            await state_store.save_query_result(
+                query_id, query, profile, plan,
+                final["answer"], final["confidence"], duration
+            )
+
+            # Mark all logs as successfully batch-logged
+            await log_ctx.batch_mark_success()
+
+            return {
+                "query_id":   query_id,
+                "profile":    profile,
+                "answer":     final["answer"],
+                "confidence": final["confidence"],
+                "sources":    sources[:10],
+                "plan":       plan,
+                "duration_ms": duration,
+            }
+        except Exception as e:
+            logger.error(f"[{query_id}] Pipeline error: {e}")
+            await log_ctx.batch_mark_success()  # Still mark partial logs
+            raise  # Re-raise to caller
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

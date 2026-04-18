@@ -87,3 +87,45 @@ INFO [scrapers.registry] [registry] wikipedia: 0 chunks
 INFO [scrapers.registry] [registry] arxiv: 10 chunks
 INFO [scrapers.registry] [registry] openalex: 0 chunks
 WARNING [core.pipeline] [ef7025a1] Triage removed all chunks — keeping top 3
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [scrapers.registry] [registry] arxiv: enabled
+INFO [scrapers.registry] [registry] wikipedia: enabled
+INFO [scrapers.registry] [registry] ddgs: enabled
+INFO [scrapers.registry] [registry] openalex: enabled
+INFO [scrapers.registry] [registry] open_meteo: enabled
+INFO [scrapers.registry] [registry] sec_edgar: enabled
+INFO [scrapers.registry] [registry] youtube: enabled
+INFO [core.pipeline] [9cd1e9fc] Starting pipeline: give me an alternative non-idealistic endoing for Paulo Coehlo's Alchemist, use 
+INFO [scrapers.registry] [registry] wikipedia: 0 chunks
+INFO [scrapers.registry] [registry] web: 1 chunks
+WARNING [core.pipeline] [9cd1e9fc] Triage removed all chunks — keeping top 3
+ERROR [core.pipeline] [9cd1e9fc] analyst_0 raised: LogContext.log_agent_reasoning() got an unexpected keyword argument 'step_number'
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [scrapers.registry] [registry] arxiv: enabled
+INFO [scrapers.registry] [registry] wikipedia: enabled
+INFO [scrapers.registry] [registry] ddgs: enabled
+INFO [scrapers.registry] [registry] openalex: enabled
+INFO [scrapers.registry] [registry] open_meteo: enabled
+INFO [scrapers.registry] [registry] sec_edgar: enabled
+INFO [scrapers.registry] [registry] youtube: enabled
+INFO [core.pipeline] [78df33f2] Starting pipeline: give me an alternative non-idealistic endoing for Paulo Coehlo's Alchemist, use 
+INFO [scrapers.registry] [registry] wikipedia: 0 chunks
+INFO [scrapers.registry] [registry] web: 1 chunks
+WARNING [core.pipeline] [78df33f2] Triage removed all chunks — keeping top 3
+ERROR [core.pipeline] [78df33f2] analyst_0 raised: LogContext.log_agent_reasoning() got multiple values for argument 'agent_role'
+INFO [scrapers.registry] [registry] hackernews: enabled
+INFO [scrapers.registry] [registry] web: enabled
+INFO [scrapers.registry] [registry] arxiv: enabled
+INFO [scrapers.registry] [registry] wikipedia: enabled
+INFO [scrapers.registry] [registry] ddgs: enabled
+INFO [scrapers.registry] [registry] openalex: enabled
+INFO [scrapers.registry] [registry] open_meteo: enabled
+INFO [scrapers.registry] [registry] sec_edgar: enabled
+INFO [scrapers.registry] [registry] youtube: enabled
+INFO [core.pipeline] [de8a12b3] Starting pipeline: give me an alternative non-idealistic endoing for Paulo Coehlo's Alchemist, use 
+INFO [scrapers.registry] [registry] wikipedia: 0 chunks
+INFO [scrapers.registry] [registry] web: 1 chunks
+WARNING [core.pipeline] [de8a12b3] Triage removed all chunks — keeping top 3
+INFO [core.pipeline] [5663aa48] Starting pipeline: clear
