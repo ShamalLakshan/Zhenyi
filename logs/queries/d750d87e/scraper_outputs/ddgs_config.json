@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "results_per_query": 12,
+  "timeout_seconds": 10
+}

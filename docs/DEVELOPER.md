@@ -1,4 +1,4 @@
-# LLM Research Council — Developer Documentation
+# Zhenyi — Intelligent Research Synthesizer — Developer Documentation
 
 > Complete reference for anyone continuing or extending this project.
 
@@ -31,7 +31,7 @@ it a question, it:
 
 - Dynamically assigns roles (triage, analyst, synthesizer) to whichever LLM
   providers are currently available and have quota remaining
-- Scrapes live data from HackerNews, Reddit, and the web
+- Scrapes live data from HackerNews and the web
 - Runs multiple analysts in parallel on different slices of the scraped data
 - Synthesizes a final answer with confidence score
 
@@ -60,12 +60,12 @@ expensive model**, because it reads fresher data and cross-checks findings.
                                  │  plan: {profile, scrapers, roles}
          ┌───────────────────────┼──────────────────────┐
          │                       │                      │
-    ┌────▼────┐           ┌──────▼──────┐        ┌─────▼──────┐
-    │HN       │           │Reddit       │        │Web          │
-    │Scraper  │           │Scraper      │        │Scraper      │
-    └────┬────┘           └──────┬──────┘        └─────┬──────┘
-         └───────────────────────┼──────────────────────┘
-                                 │  raw chunks
+    ┌────▼────┐           ┌──────▼──────┐        
+    │HN       │           │Web          │       
+    │Scraper  │           │Scraper      │       
+    └────┬────┘           └──────┬──────┘       
+         └───────────────┬───────────────┘
+                         │  raw chunks
                     ┌────────────▼────────────┐
                     │   Triage Agent           │
                     │   Scores 0-10 per chunk  │
@@ -186,7 +186,7 @@ Pipeline returns:
 ## 4. File Reference
 
 ```
-council/
+zhenyi/
 │
 ├── main.py                     Entry point. CLI loop, output formatting,
 │                               /status /history /chain commands.
@@ -225,7 +225,6 @@ council/
     ├── registry.py             ScraperRegistry. Concurrent execution.
     │                           Isolates individual scraper failures.
     ├── hackernews.py           Algolia HN API. Distills queries to keywords.
-    ├── reddit.py               PRAW. Auto-disables if no credentials.
     └── web.py                  DuckDuckGo Lite. No credentials needed.
 ```
 
@@ -318,11 +317,6 @@ scrapers:
     enabled: true
     results_per_query: 15   # how many HN posts to fetch
     timeout_seconds: 10     # abort if takes longer
-  reddit:
-    enabled: true
-    results_per_query: 10
-    timeout_seconds: 15
-    subreddits: []          # empty = search all Reddit; ["python","rust"] = specific subs
   web:
     enabled: true
     results_per_query: 8
@@ -349,11 +343,6 @@ COHERE_KEY_1=...
 
 # GitHub — starts with "ghp_" or "github_pat_"
 GH_KEY_1=ghp_...
-
-# Reddit (optional)
-REDDIT_CLIENT_ID=...
-REDDIT_CLIENT_SECRET=...
-REDDIT_USER_AGENT=council_bot/1.0
 ```
 
 ---
@@ -419,7 +408,6 @@ from scrapers.my_scraper import MyScraper
 
 scraper_classes = {
     "hackernews": HackerNewsScraper,
-    "reddit":     RedditScraper,
     "web":        WebScraper,
     "my_scraper": MyScraper,          # ← add here
 }
@@ -490,7 +478,7 @@ async def _call_provider(self, key: KeyState, prompt: str) -> str:
 
 ## 10. Database Schema
 
-The SQLite database (`council.db`) has 4 tables.
+The SQLite database (`zhenyi.db`) has 4 tables.
 
 ### `chunks`
 One row per scraped chunk that passed triage.
@@ -598,12 +586,6 @@ nothing regardless of how the query is phrased.
 no coverage exists, the pipeline continues with whatever other scrapers found.
 Web scraper is more likely to find niche content.
 
-### Reddit requires app registration
-**Problem:** PRAW needs OAuth credentials.
-**Workaround:** Reddit scraper auto-disables if credentials are missing. The
-system works without Reddit. To enable: create a "script" app at
-`reddit.com/prefs/apps`, get client_id and client_secret, add to `.env`.
-
 ### OpenRouter free models get rotated
 **Problem:** Models with `:free` suffix may be removed or throttled without
 notice.
@@ -631,12 +613,12 @@ state_store in `pipeline.py`.
 ## 13. CLI Commands
 
 ```
-council> <any text>       Run a research query
-council> /status          Key pool quota and scraper circuit breaker status
-council> /history         Last 10 queries with query_id, profile, confidence
-council> /chain <id>      Full thought chain for a query (use id from /history)
-council> /help            Command list
-council> /quit            Exit
+zhenyi> <any text>       Run a research query
+zhenyi> /status          Key pool quota and scraper circuit breaker status
+zhenyi> /history         Last 10 queries with query_id, profile, confidence
+zhenyi> /chain <id>      Full thought chain for a query (use id from /history)
+zhenyi> /help            Command list
+zhenyi> /quit            Exit
 ```
 
 ### Reading `/status`
@@ -648,7 +630,6 @@ council> /quit            Exit
 
 ── SCRAPER STATUS ──────────────────────────────────────────
   hackernews       ✓ available
-  reddit           ✗ unavailable [disabled]
   web              ✓ available
 ```
 
@@ -681,11 +662,11 @@ system used its heuristic fallback plan. The rest of the pipeline still ran.
 Gemini quota exhausted. The system falls back automatically. To fix:
 - Wait for quota reset (midnight Pacific time)
 - Add more Gemini keys from different accounts
-- Check `council.log` for the cooldown duration
+- Check console logs for the cooldown duration
 
 ### "0 chunks from hackernews"
 The topic has no HN coverage, or the keyword distillation produced terms with
-no matches. Check `council.log` for the distilled query terms. Try enabling
+no matches. Check console logs for the distilled query terms. Try enabling
 the web scraper.
 
 ### "All analysts failed to return results"
@@ -693,13 +674,13 @@ Usually a rate limit cascade — all providers exhausted simultaneously. Check
 `/status` to see key states. Wait for cooldowns or add more keys.
 
 ### Analyst returns bad JSON
-Check `council.log` for `[analyst_X] JSON parse failed, wrapping raw text`.
+Check console logs for `[analyst_X] JSON parse failed, wrapping raw text`.
 This is non-fatal — the raw text becomes a finding. If it happens consistently
 for one provider, that provider's model may not follow JSON instructions well.
 Try a different model in `agents.yaml` for that provider.
 
 ### Scraper circuit open
-`[scraper_name] Circuit OPEN after 3 consecutive failures` in `council.log`.
+`[scraper_name] Circuit OPEN after 3 consecutive failures` in console logs.
 The scraper will auto-recover after 5 minutes. To force immediate reset,
 restart the program.
 
@@ -710,13 +691,13 @@ All keys are either unconfigured (empty in `.env`) or in cooldown. Check
 ### Checking logs
 ```bash
 # All errors and warnings from the last run
-grep -E "ERROR|WARNING" council.log | tail -50
+# Check console output for ERROR/WARNING messages during server execution
 
 # Everything for a specific query
-grep "1fa0fe08" council.log
+# See logs/queries/1fa0fe08/ for this query's execution trace
 
 # Orchestrator decisions
-grep "orchestrator" council.log | tail -20
+# Check logs/queries/*/orchestrator_plan.json for orchestrator decisions
 ```
 
 ---

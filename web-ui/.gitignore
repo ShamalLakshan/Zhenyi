@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+*.vue.js
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+~*

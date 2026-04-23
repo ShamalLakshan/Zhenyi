@@ -1,0 +1,19 @@
+{
+  "agent_id": "triage",
+  "provider": "groq",
+  "model": "llama-3.1-8b-instant",
+  "attempt": 0,
+  "timestamp": 1776493586.1114593,
+  "payload": {
+    "model": "llama-3.1-8b-instant",
+    "provider": "groq",
+    "messages": [
+      {
+        "role": "user",
+        "content": "You are a research librarian deciding whether a source is worth an expert's time.\n\nRESEARCH QUERY: what is your idea on the relationship between modern romance and capitalism?\n\nSOURCE CONTENT:\nProceedings to the 27th Workshop \"What Comes Beyond the Standard Models\" Bled, July 8-17, 2024\n\nAuthors: R. Bernabei, P. Belli, A. Bussolotti, V. Caracciolo, R. Cerulli, A. Leoncini, V. Merlo, F. Montecchia, F. Cappella, A. d'Angelo, A. Incicchitti, A. Mattei, C. J. Dai, X. H. Ma, X. D. Sheng, Z. P. Ye, V. A. Beylin, M. Yu. Khlopov, D. O. Sopin, T. E. Bikbaev, M. Yu. Khlopov, A. G. Mayorov, Stanley Brodsky, Daniele Fargion, A. M. Kharakashyan, A. Kleppe, M. A. Krasnov, O. Trivedi, Norma Susana Mankoc Borstnik, Holger Bech Nielsen, Euich Miztani, Keiichi Nagayo, Konstantin Stepanyantz, Elia Dmi\n\nScore this source's relevance and usefulness to the query:\n10 = directly answers the query with specific, verifiable information\n7-9 = highly relevant, contains useful specific details\n4-6 = tangentially related or too general\n1-3 = barely related\n0 = completely irrelevant or spam\n\nReply with ONLY a single integer 0-10. Nothing else."
+      }
+    ],
+    "max_tokens": 1500,
+    "temperature": 0.3
+  }
+}

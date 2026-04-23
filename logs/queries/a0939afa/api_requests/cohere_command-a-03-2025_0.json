@@ -1,0 +1,19 @@
+{
+  "agent_id": "synthesizer",
+  "provider": "cohere",
+  "model": "command-a-03-2025",
+  "attempt": 0,
+  "timestamp": 1776492277.7192562,
+  "payload": {
+    "model": "command-a-03-2025",
+    "provider": "cohere",
+    "messages": [
+      {
+        "role": "user",
+        "content": "You are a senior research synthesizer. Your output will be read by someone who needs comprehensive, expert-level information \u2014 not a summary a general chatbot would give.\n\nQUERY: according to religious ideologies which contains a creator at the origin of the religion, how does these religions provide arguments, to the question of deciding ones birthplace and birth rights, and the economic, social, political environment he is born into. what are the religious justifications for this?? specially in catholicism.....\n\nANALYST FINDINGS:\nNo findings.\n\nWrite a comprehensive answer following these rules:\n1. Lead with the most important specific facts directly relevant to the query\n2. Include concrete details: numbers, names, specifications, versions, dates\n3. Structure with clear sections if the answer covers multiple aspects\n4. Explicitly address contradictions \u2014 do not smooth them over\n5. State what is well-established vs what is uncertain or contested\n6. Do NOT use phrases like 'based on the findings' or 'the analysts found' \u2014 write as if you are the expert, directly answering the question\n7. Minimum 3 paragraphs. Maximum depth the data supports.\n\nEnd your response with exactly this line:\nCONFIDENCE: <decimal 0.0 to 1.0>"
+      }
+    ],
+    "max_tokens": 1500,
+    "temperature": 0.3
+  }
+}

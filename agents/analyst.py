@@ -23,29 +23,54 @@ class AnalystAgent(BaseAgent):
         query: str,
         chunks: list[dict],
         query_id: str = "",
+        log_ctx=None,
     ) -> dict:
         """
         Analyse a set of chunks for the query.
         Returns a structured dict regardless of LLM output quality.
+        log_ctx: optional logging context for debug logging
         """
         if not chunks:
             return self._empty_result("no chunks assigned")
 
         context = self._build_context(chunks)
         prompt = (
-            f"You are a research analyst. Analyse the provided sources for the query below.\n\n"
-            f"QUERY: {query}\n\n"
+            f"You are a specialist research analyst with deep domain expertise. "
+            f"Your job is to extract maximum useful information from these sources.\n\n"
+            f"RESEARCH QUERY: {query}\n\n"
             f"SOURCES:\n{context}\n\n"
-            f"Respond with ONLY valid JSON, no markdown, no preamble:\n"
+            f"Instructions:\n"
+            f"- Extract SPECIFIC facts: names, numbers, versions, dates, part numbers, "
+            f"specifications, prices, authors, institutions — not generalities\n"
+            f"- Note direct quotes or data points from sources where relevant\n"
+            f"- Identify what sources AGREE on and what they CONTRADICT\n"
+            f"- Flag any claims that lack a source or seem uncertain\n"
+            f"- Do NOT pad with filler. Every finding must be a concrete, specific claim.\n\n"
+            f"Respond ONLY with valid JSON, no markdown, no preamble:\n"
             f'{{\n'
-            f'  "confidence": <float 0.0-1.0>,\n'
-            f'  "key_findings": ["finding 1", "finding 2"],\n'
-            f'  "contradictions": ["contradiction if any, else empty list"],\n'
-            f'  "needs_more_info": ["gap if any, else empty list"]\n'
+            f'  "confidence": <float 0.0-1.0 based on source quality and agreement>,\n'
+            f'  "key_findings": [\n'
+            f'    "Specific finding with concrete detail — not a vague summary",\n'
+            f'    "Another specific finding"\n'
+            f'  ],\n'
+            f'  "contradictions": ["Source A says X but Source B says Y — be explicit"],\n'
+            f'  "needs_more_info": ["Specific gap that would improve the answer"]\n'
             f'}}'
         )
 
         raw = await self.call(prompt, query_id=query_id, estimated_tokens=800)
+
+        # Log reasoning step (non-blocking)
+        if log_ctx and query_id:
+            try:
+                await log_ctx.log_agent_reasoning(
+                    self.agent_id, "analyst", 1,
+                    f"Analyzing {len(chunks)} chunks",
+                    f"Generated analysis response",
+                    len(chunks)
+                )
+            except Exception as e:
+                logger.debug(f"[{self.agent_id}] Log reasoning error (non-fatal): {e}")
 
         if not raw:
             return self._empty_result("empty response from provider")
@@ -53,7 +78,7 @@ class AnalystAgent(BaseAgent):
         parsed = self.parse_json(raw)
         if parsed and "key_findings" in parsed:
             # Normalise fields
-            return {
+            result = {
                 "confidence": float(parsed.get("confidence", 0.5)),
                 "key_findings": [str(f) for f in parsed.get("key_findings", [])],
                 "contradictions": [str(c) for c in parsed.get("contradictions", [])],
@@ -61,6 +86,21 @@ class AnalystAgent(BaseAgent):
                 "agent_id": self.agent_id,
                 "provider": self.provider,
             }
+            
+            # Log successful parsing (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_agent_reasoning(
+                        self.agent_id, "analyst", 2,
+                        f"Successfully parsed {len(result.get('key_findings', []))} findings",
+                        "Analysis complete",
+                        0,
+                        result.get("confidence", 0.5)
+                    )
+                except Exception as e:
+                    logger.debug(f"[{self.agent_id}] Log parsing error (non-fatal): {e}")
+            
+            return result
 
         # Parse failed — wrap raw text as a finding rather than losing it
         logger.warning(f"[{self.agent_id}] JSON parse failed, wrapping raw text")

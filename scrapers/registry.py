@@ -16,8 +16,14 @@ import logging
 from typing import Optional
 
 from scrapers.hackernews import HackerNewsScraper
-from scrapers.reddit import RedditScraper
 from scrapers.web import WebScraper
+from scrapers.arxiv_scraper import ArxivScraper
+from scrapers.wikipedia_scraper import WikipediaScraper
+from scrapers.ddgs_scraper import DdgsScraper
+from scrapers.openalex_scraper import OpenalexScraper
+from scrapers.open_meteo_scraper import OpenmeteoScraper
+from scrapers.sec_edgar_scraper import SecEdgarScraper
+from scrapers.youtube_scraper import YoutubeScraper
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +41,15 @@ class ScraperRegistry:
         """Instantiate all scrapers. Each one handles its own availability."""
         scraper_classes = {
             "hackernews": HackerNewsScraper,
-            "reddit":      RedditScraper,
             "web":         WebScraper,
+            "arxiv":       ArxivScraper,
+            "wikipedia":   WikipediaScraper,
+            "ddgs":        DdgsScraper,
+            "openalex":    OpenalexScraper,
+            "open_meteo":  OpenmeteoScraper,
+            "sec_edgar":   SecEdgarScraper,
+            "youtube":     YoutubeScraper,
             # ── Add new scrapers here ──────────────────────────────────────
-            # "academic": AcademicScraper,
             # "stackoverflow": StackOverflowScraper,
         }
 
@@ -52,11 +63,13 @@ class ScraperRegistry:
             except Exception as e:
                 logger.error(f"[registry] Failed to init {name}: {e}")
 
-    async def run(self, names: list[str], query: str) -> list[dict]:
+    async def run(self, names: list[str], query: str, log_ctx=None, query_id: str = "") -> list[dict]:
         """
         Run the requested scrapers concurrently.
         Each scraper is isolated — one failure does not affect others.
         Returns all chunks combined.
+        log_ctx: optional logging context for debug logging
+        query_id: optional query ID for logging
         """
         if not names:
             return []
@@ -75,7 +88,7 @@ class ScraperRegistry:
             return []
 
         tasks = {
-            name: self._scrapers[name].scrape(query)
+            name: self._scrapers[name].scrape(query, query_id=query_id)
             for name in available
         }
 

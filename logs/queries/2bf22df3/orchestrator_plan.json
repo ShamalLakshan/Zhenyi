@@ -1,0 +1,30 @@
+{
+  "reasoning": "The query demands deep research into complex religious doctrines regarding creation, human existence, social structures, and specific theological justifications, requiring multiple information sources, detailed analysis, and specialized synthesis for a comprehensive answer.",
+  "profile": "deep_research",
+  "scrapers": [
+    "wikipedia",
+    "web",
+    "ddgs"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "analyst_1": {
+      "provider": "gemini",
+      "model": "gemini-2.5-flash"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776492458.1906734
+}

@@ -1,0 +1,11 @@
+{
+  "agent_id": "triage",
+  "provider": "groq",
+  "model": "llama-3.1-8b-instant",
+  "attempt": 0,
+  "timestamp": 1776491340.6652074,
+  "response_code": 200,
+  "payload": {
+    "content": "4"
+  }
+}

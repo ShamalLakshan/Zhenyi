@@ -1,0 +1,25 @@
+{
+  "reasoning": "The query requires in-depth research into religious justifications, specifically for Catholicism, regarding birthplace, birthrights, and socio-economic circumstances, necessitating a 'research' profile with web scrapers, a strong reasoning analyst, and a synthesizer.",
+  "profile": "research",
+  "scrapers": [
+    "wikipedia",
+    "web"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776491142.3436418
+}

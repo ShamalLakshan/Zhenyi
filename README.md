@@ -1,95 +1,150 @@
-# LLM Research Council
+<img src="project-assets/banner.png" alt="Zhenyi Banner" width="100%" style="max-width: 900px; height: auto; display: block; margin: 0 auto;">
 
-Multi-provider research agent that uses free-tier LLM APIs.
-Gemini acts as the orchestrator and dynamically assigns roles to other
-providers based on the query and live key availability.
+# Zhenyi - Multi-Agent Research System
+
+<div align="center">
+<img src="project-assets/logo%20(2).png" alt="Zhenyi Logo" width="200" height="200" style="max-width: 100%; height: auto;">
+</div>
+
+Zhenyi is an open-source multi-agent AI system that conducts autonomous research by orchestrating multiple LLM providers, scraping diverse data sources, and synthesizing coherent answers. Built with **dynamic role assignment**, **intelligent resource scheduling**, and **transparent reasoning chains**.
+
+Named after Wang Zhenyi (1768–1797), a pioneering Chinese mathematician and astronomer who embodied the spirit of rigorous inquiry.
+
+> **⚠️Status**: This is an experimental project in active development. APIs and all the features may change. Use at your own discretion.
 
 ## Quick Start
 
 ```bash
-# 1. Create and activate virtual environment (Windows)
+# 1. Clone and setup
+git clone https://github.com/yourusername/zhenyi.git
+cd zhenyi
 python -m venv venv
-venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 2. Install dependencies
+# 2. Install and configure
 pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your free-tier API keys
 
-# 3. Set up API keys
-copy .env.example .env
-# Open .env and fill in your keys
+# 3. Run
+uvicorn server:app --reload --host 0.0.0.0 --port 8000
 
-# 4. Run
-python main.py
+# 4. Open browser
+# http://localhost:8000
 ```
 
-## Commands
+## How It Works
 
-| Command | Description |
-|---|---|
-| `<any text>` | Run a research query |
-| `/status` | Show key pool and scraper status |
-| `/history` | Show last 10 queries |
-| `/chain <id>` | Show thought chain for a query ID |
-| `/help` | Show commands |
-| `/quit` | Exit |
+![Zhenyi Pipeline Architecture](docs/diagrams/basic-diagram.svg)
 
-## Project Structure
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed pipeline design.
 
+## Features
+
+- **Multi-LLM Orchestration** - Seamlessly work with 6+ providers (Gemini, Groq, OpenRouter, Cerebras, Cohere, GitHub)
+- **9 Built-in Scrapers** - HackerNews, ArXiv, Wikipedia, SEC Edgar, YouTube, Web Search, and more
+- **Smart Filtering** - Triage removes irrelevant data before analysis
+- **Parallel Processing** - Scrapers and analysts run concurrently for speed
+- **Transparent Chains** - Full audit trail of reasoning for every query
+- **Free-Tier Friendly** - Uses only free APIs; no paid services required
+- **Real-time Updates** - WebSocket events for frontend progress tracking
+- **Production Ready** - SQLite persistence, circuit breaker pattern, error recovery
+
+## Documentation
+
+- **[Setup Guide](docs/SETUP.md)** - Installation and configuration
+- **[Architecture](docs/ARCHITECTURE.md)** - System design and pipeline stages
+- **[API Reference](docs/API.md)** - REST/WebSocket endpoints
+- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing and extending
+
+## System Requirements
+
+- Python 3.9+
+- Free API keys (Gemini recommended as starting point)
+- 2+ GB RAM
+- Internet connection (for scrapers)
+
+## Supported LLM Providers
+
+All free-tier with no credit card required:
+
+| Provider | Model | Free Quota |
+|----------|-------|-----------|
+| **Google Gemini** | gemini-2.5-flash | 1,000/day |
+| **Groq** | llama-3.1/3.3 | 14,400/day |
+| **OpenRouter** | meta-llama/llama-3.3-70b | 200/day |
+| **Cerebras** | llama3.1-8b | 14,400/day |
+| **Cohere** | command-a-03-2025 | 1,000/day |
+| **GitHub Models** | gpt-4o-mini | 150/day |
+
+See [docs/SETUP.md](docs/SETUP.md) for getting keys.
+
+## Scrapers
+
+- **hackernews** - Tech news and discussions
+- **arxiv** - Academic papers and research
+- **wikipedia** - General knowledge
+- **web** - DuckDuckGo search results
+- **youtube** - Video descriptions and metadata
+- **sec_edgar** - Financial filings (US only)
+- **openalex** - Academic metadata
+- **open_meteo** - Weather and climate data
+- **ddgs** - Web search alternative
+
+## Example Usage
+
+**Via Web UI**:
+1. Open http://localhost:8000
+2. Enter your query
+3. Watch real-time pipeline progress
+4. Read synthesized answer with citations
+
+**Via API**:
+```bash
+curl -X POST http://localhost:8000/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Latest breakthroughs in quantum computing"}'
+
+# Result with query_id
+# Use WebSocket to watch progress: ws://localhost:8000/ws/query/{query_id}
 ```
-council/
-├── main.py                 # Entry point + CLI
-├── agents.yaml             # Provider config and key references
-├── .env                    # API keys (never commit this)
-├── .env.example            # Template for .env
-├── requirements.txt
-│
-├── core/
-│   ├── key_pool.py         # Key state tracking + provider selection
-│   ├── state_store.py      # SQLite: chunks, agent outputs, thought chain
-│   ├── pipeline.py         # Pipeline orchestration
-│   └── exceptions.py       # Custom exceptions
-│
-├── agents/
-│   ├── base_agent.py       # LLM call handler (all providers)
-│   ├── orchestrator.py     # Gemini planner — assigns roles dynamically
-│   ├── triage.py           # Relevance scoring
-│   ├── analyst.py          # Content analysis
-│   └── synthesizer.py      # Final answer generation
-│
-└── scrapers/
-    ├── base_scraper.py     # Circuit breaker + normalisation
-    ├── registry.py         # Runs scrapers concurrently
-    ├── hackernews.py       # No credentials required
-    ├── reddit.py           # Requires REDDIT_CLIENT_ID/SECRET in .env
-    └── web.py              # DuckDuckGo Lite — no credentials
-```
 
-## Adding More API Keys
+## Architecture Highlights
 
-Edit `agents.yaml` — add the env var name to the provider's `keys` list:
+- **Dynamic Role Assignment** - Orchestrator assigns agents based on query type and provider availability
+- **Circuit Breaker** - Graceful degradation when scrapers/APIs fail
+- **Key Pool Management** - Automatic provider rotation and fallback
+- **Event Bus** - Real-time pipeline events for frontend updates
+- **Structured Persistence** - SQLite with full query history and reasoning traces
 
-```yaml
-providers:
-  groq:
-    keys: [GROQ_KEY_1, GROQ_KEY_2, GROQ_KEY_3]  # add here
-```
+## Contributing
 
-Add the actual key value to `.env`:
+Contributions welcome. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for:
+- Adding new scrapers
+- Supporting new LLM providers
+- Extending agent roles
+- Contributing to frontend
 
-```env
-GROQ_KEY_3=gsk_your_new_key_here
-```
+Process:
+1. Fork repository
+2. Create feature branch
+3. Make changes with tests
+4. Open pull request
 
-No code changes needed.
+## Status
 
-## Adding a New Scraper
+Active development. Core features stable; APIs subject to change during v0.x phase.
 
-1. Create `scrapers/my_scraper.py` extending `BaseScraper`
-2. Register it in `scrapers/registry.py` under `scraper_classes`
-3. Add config in `agents.yaml` under `scrapers:`
+## License
 
-## Logs
+[License file](LICENSE) - to be determined
 
-All pipeline activity is logged to `council.log`.
-The SQLite database `council.db` stores all query history and thought chains.
-Use `/chain <id>` in the CLI to trace any query step by step.
+## Questions?
+
+- Check [docs/SETUP.md](docs/SETUP.md) for installation issues
+- See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for architecture questions
+- Read [docs/API.md](docs/API.md) for endpoint reference
+
+## Acknowledgments
+
+Named after Wang Zhenyi (1768–1797), whose pioneering work in mathematics and astronomy exemplifies the spirit of intelligent inquiry that guides this project.

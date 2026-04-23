@@ -1,8 +1,70 @@
+# Environment Variables
 .env
+.env.local
+.env.*.local
+
+# Python
 venv/
+.venv/
+env/
+ENV/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js / npm / Vite
+node_modules/
+npm-debug.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+.vite/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+.sublime-workspace
+.sublime-project
+*.vim
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+
+# Database & Logs
 *.db
 *.db-wal
 *.db-shm
-.DS_Store
+*.log
+logs/
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+build/
+dist/
+.turbo/
+
+# Local test files
+test-results/
+coverage/
+
+# Misc
+.cache/
+*.tmp
+*.temp
+.eslintcache

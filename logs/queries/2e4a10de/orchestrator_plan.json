@@ -1,0 +1,26 @@
+{
+  "reasoning": "The query asks for an idea on a complex socio-economic and cultural topic, requiring deep research, analytical reasoning, and synthesis of information from various sources to formulate a comprehensive perspective.",
+  "profile": "deep_research",
+  "scrapers": [
+    "web",
+    "wikipedia",
+    "arxiv"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776493551.6210053
+}

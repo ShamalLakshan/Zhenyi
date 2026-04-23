@@ -1,0 +1,19 @@
+{
+  "agent_id": "triage",
+  "provider": "groq",
+  "model": "llama-3.1-8b-instant",
+  "attempt": 0,
+  "timestamp": 1776488350.474473,
+  "payload": {
+    "model": "llama-3.1-8b-instant",
+    "provider": "groq",
+    "messages": [
+      {
+        "role": "user",
+        "content": "You are a research librarian deciding whether a source is worth an expert's time.\n\nRESEARCH QUERY: give me an alternative non-idealistic endoing for Paulo Coehlo's Alchemist, use around 3 models and any amount of scraper you like for this query.\n\nSOURCE CONTENT:\nSearch results for 'give me an alternative non-idealistic endoing for Paulo Coehlo's Alchemist, use around 3 models and any amount of scraper you like for this query.':\ngive me an alternative non-idealistic endoing for Paulo Coehlo&#39;s Alchemist, use around 3 models and any amount of scraper you like for this query. at DuckDuckGo &nbsp; DuckDuckGo &nbsp; All Regions Argentina Australia Austria Belgium (fr) Belgium (nl) Brazil Bulgaria Canada (en) Canada (fr) Catalonia Chile China Colombia Croatia Czech Republic Denmark Estonia Finland France Germany Greece Hong Kong Hungary Iceland India (en\n\nScore this source's relevance and usefulness to the query:\n10 = directly answers the query with specific, verifiable information\n7-9 = highly relevant, contains useful specific details\n4-6 = tangentially related or too general\n1-3 = barely related\n0 = completely irrelevant or spam\n\nReply with ONLY a single integer 0-10. Nothing else."
+      }
+    ],
+    "max_tokens": 1500,
+    "temperature": 0.3
+  }
+}

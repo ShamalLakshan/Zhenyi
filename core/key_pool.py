@@ -35,6 +35,7 @@ class KeyState:
     window_start: float = field(default_factory=time.time)
     cooldown_until: float = 0.0
     consecutive_errors: int = 0
+    last_exhaustion_time: float = 0.0
 
     @property
     def value(self) -> str:
@@ -55,6 +56,19 @@ class KeyState:
             and self.rpm_used < self.rpm_limit
             and self.daily_used < self.daily_limit
         )
+
+    @property
+    def status(self) -> str:
+        """Returns current key status: ready, cooling, exhausted, or error."""
+        if not self.is_configured:
+            return "not_configured"
+        if time.time() <= self.cooldown_until:
+            return "cooling"
+        if self.daily_used >= self.daily_limit:
+            return "exhausted"
+        if self.consecutive_errors >= 3:
+            return "error"
+        return "ready"
 
     @property
     def daily_remaining(self) -> int:
@@ -82,10 +96,16 @@ class KeyState:
         self.cooldown_until = time.time() + seconds
         logger.debug(f"Key {self.env_var} cooling down for {seconds:.0f}s")
 
-    def record_error(self, is_rate_limit: bool = False):
+    def record_error(self, is_rate_limit: bool = False, is_quota: bool = False):
+        """Record an error and update key status accordingly."""
         self.consecutive_errors += 1
         if is_rate_limit:
             self.set_cooldown(65.0)
+            logger.warning(f"Key {self.env_var} rate limited (429), cooling for 65s")
+        elif is_quota:
+            self.last_exhaustion_time = time.time()
+            self.set_cooldown(300.0)
+            logger.warning(f"Key {self.env_var} quota exhausted, soft-disabling for 300s")
         elif self.consecutive_errors >= 3:
             # Soft-disable after 3 non-rate-limit errors
             self.set_cooldown(300.0)
@@ -96,10 +116,12 @@ class KeyState:
             "env_var": self.env_var,
             "configured": self.is_configured,
             "ready": self.is_ready,
+            "status": self.status,
             "daily_remaining": self.daily_remaining,
             "rpm_remaining": self.rpm_remaining,
             "cooldown_seconds": max(0.0, self.cooldown_until - time.time()),
             "consecutive_errors": self.consecutive_errors,
+            "last_exhaustion_time": self.last_exhaustion_time,
         }
 
 
@@ -178,6 +200,38 @@ class KeyPool:
         if not all_keys:
             return None
         return min(all_keys, key=lambda k: k.cooldown_until)
+
+    def get_fallback_keys(self, provider: str) -> list[KeyState]:
+        """
+        Returns all configured keys for a provider sorted by remaining quota (descending).
+        Used for intelligent fallback when primary key fails.
+        Ignores cooldown state to allow immediate fallback to secondary key.
+        """
+        all_keys = [k for k in self.pools.get(provider, []) if k.is_configured]
+        # Sort by daily_remaining (highest first), then by ready status
+        return sorted(
+            all_keys,
+            key=lambda k: (k.is_ready, k.daily_remaining),
+            reverse=True
+        )
+
+    def pick_with_fallback(self, provider: str, max_attempts: int = 3) -> Optional[KeyState]:
+        """
+        Returns best available key for a provider, considering fallback keys.
+        Useful when primary key fails and we want to try secondary keys.
+        Returns None only if no configured keys exist.
+        """
+        # First try: get ready key
+        ready_key = self.pick(provider)
+        if ready_key:
+            return ready_key
+        
+        # Second try: get any configured key with most quota (even if cooling)
+        fallback_keys = self.get_fallback_keys(provider)
+        if fallback_keys:
+            return fallback_keys[0]
+        
+        return None
 
     # ─── Orchestrator Access ──────────────────────────────────────────────────
 

@@ -1,0 +1,30 @@
+{
+  "reasoning": "The query demands deep theological and socio-religious analysis across multiple creator-based religions, with a specific focus on Catholicism, requiring extensive research into justifications for birth circumstances, thus warranting a 'deep_research' profile, multiple specialized analysts, and comprehensive scraping.",
+  "profile": "deep_research",
+  "scrapers": [
+    "web",
+    "wikipedia",
+    "ddgs"
+  ],
+  "models": {
+    "triage": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant"
+    },
+    "analyst_0": {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.3-70b-instruct"
+    },
+    "analyst_1": {
+      "provider": "gemini",
+      "model": "gemini-2.5-flash"
+    },
+    "synthesizer": {
+      "provider": "cohere",
+      "model": "command-a-03-2025"
+    }
+  },
+  "fallback_used": false,
+  "constraints": "",
+  "timestamp": 1776492835.7635806
+}

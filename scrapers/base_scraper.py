@@ -20,6 +20,12 @@ FAILURE_THRESHOLD = 3         # failures before circuit opens
 RECOVERY_WAIT_SECONDS = 300   # 5 minutes before retry after circuit opens
 
 
+# Lazy import to avoid circular dependency
+def get_log_context():
+    from core.pipeline import get_current_log_context
+    return get_current_log_context()
+
+
 class BaseScraper(ABC):
     """
     Abstract base for all scrapers.
@@ -51,11 +57,15 @@ class BaseScraper(ABC):
             return False
         return True
 
-    async def scrape(self, query: str) -> list[dict]:
+    async def scrape(self, query: str, query_id: str = "") -> list[dict]:
         """
         Public entry point. Wraps _fetch() with circuit breaker and timeout.
         Always returns a list — empty on any failure.
+        Logs scraper invocation to debug context if available.
         """
+        log_ctx = get_log_context()
+        start_time = time.time()
+        
         if not self.is_available:
             logger.debug(f"[{self.name}] Skipped — not available (circuit={self._circuit_open})")
             return []
@@ -66,14 +76,67 @@ class BaseScraper(ABC):
                 timeout=self.timeout_seconds
             )
             self._on_success()
-            return self._normalise(results)
+            normalized = self._normalise(results)
+            
+            # Log successful scraper invocation (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_scraper(
+                        self.name,
+                        {
+                            "enabled": self.enabled,
+                            "results_per_query": self.results_per_query,
+                            "timeout_seconds": self.timeout_seconds,
+                        },
+                        start_time=start_time,
+                        end_time=time.time(),
+                        chunks_returned=len(normalized),
+                        error_message=None,
+                        circuit_state="closed"
+                    )
+                except Exception as e:
+                    logger.debug(f"[{self.name}] Log scraper error (non-fatal): {e}")
+            
+            return normalized
         except asyncio.TimeoutError:
             logger.warning(f"[{self.name}] Timed out after {self.timeout_seconds}s")
             self._on_failure()
+            
+            # Log timeout failure (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_scraper(
+                        self.name,
+                        {"timeout_seconds": self.timeout_seconds},
+                        start_time=start_time,
+                        end_time=time.time(),
+                        chunks_returned=0,
+                        error_message=f"Timeout after {self.timeout_seconds}s",
+                        circuit_state="open" if self._circuit_open else "closed"
+                    )
+                except Exception as e:
+                    logger.debug(f"[{self.name}] Log timeout error (non-fatal): {e}")
+            
             return []
         except Exception as e:
             logger.warning(f"[{self.name}] Failed: {e}")
             self._on_failure()
+            
+            # Log error failure (non-blocking)
+            if log_ctx and query_id:
+                try:
+                    await log_ctx.log_scraper(
+                        self.name,
+                        {},
+                        start_time=start_time,
+                        end_time=time.time(),
+                        chunks_returned=0,
+                        error_message=str(e)[:200],
+                        circuit_state="open" if self._circuit_open else "closed"
+                    )
+                except Exception as log_e:
+                    logger.debug(f"[{self.name}] Log error failed (non-fatal): {log_e}")
+            
             return []
 
     @abstractmethod

@@ -1,0 +1,19 @@
+{
+  "agent_id": "triage",
+  "provider": "groq",
+  "model": "llama-3.1-8b-instant",
+  "attempt": 0,
+  "timestamp": 1776491830.098734,
+  "payload": {
+    "model": "llama-3.1-8b-instant",
+    "provider": "groq",
+    "messages": [
+      {
+        "role": "user",
+        "content": "You are a research librarian deciding whether a source is worth an expert's time.\n\nRESEARCH QUERY: according to religious ideologies which contains a creator at the origin of the religion, how does these religions provide arguments, to the question of deciding ones birthplace and birth rights, and the economic, social, political environment he is born into. what are the religious justifications for this?? specially in catholicism.....\n\nSOURCE CONTENT:\nSearch results for 'according to religious ideologies which contains a creator at the origin of the religion, how does these religions provide arguments, to the question of deciding ones birthplace and birth rights, and the economic, social, political environment he is born into. what are the religious justifications for this?? specially in catholicism.....':\naccording to religious ideologies which contains a creator at the origin of the religion, how does these religions provide arguments, to the question of deciding ones birthplace and birth rights, and the economic, social, political enviro\n\nScore this source's relevance and usefulness to the query:\n10 = directly answers the query with specific, verifiable information\n7-9 = highly relevant, contains useful specific details\n4-6 = tangentially related or too general\n1-3 = barely related\n0 = completely irrelevant or spam\n\nReply with ONLY a single integer 0-10. Nothing else."
+      }
+    ],
+    "max_tokens": 1500,
+    "temperature": 0.3
+  }
+}

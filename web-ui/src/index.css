@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: 16 11% 8%;
+    --foreground: 128 5% 90%;
+    --card: 132 10% 9%;
+    --card-foreground: 128 5% 90%;
+    --popover: 132 10% 9%;
+    --popover-foreground: 128 5% 90%;
+    --primary: 128 13% 51%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 130 14% 12%;
+    --secondary-foreground: 24 6% 90%;
+    --muted: 130 14% 12%;
+    --muted-foreground: 128 13% 51%;
+    --accent: 130 14% 12%;
+    --accent-foreground: 24 6% 90%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 128 9% 17%;
+    --input: 128 9% 17%;
+    --ring: 128 13% 51%;
+    --radius: 1rem;
+  }
+
+  .dark {
+    --background: 16 11% 8%;
+    --foreground: 128 5% 90%;
+    --card: 132 10% 9%;
+    --card-foreground: 128 5% 90%;
+    --popover: 132 10% 9%;
+    --popover-foreground: 128 5% 90%;
+    --primary: 128 13% 51%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 130 14% 12%;
+    --secondary-foreground: 24 6% 90%;
+    --muted: 130 14% 12%;
+    --muted-foreground: 128 13% 51%;
+    --accent: 130 14% 12%;
+    --accent-foreground: 24 6% 90%;
+    --border: 128 9% 17%;
+    --input: 128 9% 17%;
+    --ring: 128 13% 51%;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: "Inter", "Geist", sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-black/30 backdrop-blur-md border border-white/10;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
