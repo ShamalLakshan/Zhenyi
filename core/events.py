@@ -6,6 +6,7 @@ Async-safe event bus for real-time query pipeline updates.
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from enum import Enum
@@ -16,17 +17,38 @@ logger = logging.getLogger(__name__)
 
 class EventType(str, Enum):
     """Pipeline event types."""
+    # Query lifecycle
     QUERY_STARTED = "QUERY_STARTED"
-    ORCHESTRATOR_DONE = "ORCHESTRATOR_DONE"
-    SCRAPER_STARTED = "SCRAPER_STARTED"
-    SCRAPER_DONE = "SCRAPER_DONE"
-    TRIAGE_DONE = "TRIAGE_DONE"
-    ANALYST_START = "ANALYST_START"
-    ANALYST_DONE = "ANALYST_DONE"
-    SYNTHESIZER_STARTED = "SYNTHESIZER_STARTED"
-    SYNTHESIZER_DONE = "SYNTHESIZER_DONE"
     QUERY_DONE = "QUERY_DONE"
     QUERY_ERROR = "QUERY_ERROR"
+    
+    # Orchestrator
+    ORCHESTRATOR_STARTED = "ORCHESTRATOR_STARTED"
+    ORCHESTRATOR_DONE = "ORCHESTRATOR_DONE"
+    
+    # Scraping
+    SCRAPER_STARTED = "SCRAPER_STARTED"
+    CHUNKS_COLLECTED = "CHUNKS_COLLECTED"  # Raw chunks from scraper
+    SCRAPER_DONE = "SCRAPER_DONE"
+    
+    # Triage/Filtering
+    TRIAGE_STARTED = "TRIAGE_STARTED"
+    CHUNKS_SCORED = "CHUNKS_SCORED"  # Chunks with relevance scores
+    CHUNKS_FILTERED = "CHUNKS_FILTERED"  # Final filtered chunks
+    TRIAGE_DONE = "TRIAGE_DONE"
+    
+    # Analysis
+    ANALYST_START = "ANALYST_START"
+    ANALYST_CHUNK_SLICE = "ANALYST_CHUNK_SLICE"  # Chunks assigned to analyst
+    ANALYST_FINDING = "ANALYST_FINDING"  # Individual finding from analyst
+    ANALYST_DONE = "ANALYST_DONE"
+    
+    # Synthesis
+    SYNTHESIZER_STARTED = "SYNTHESIZER_STARTED"
+    SYNTHESIZER_DONE = "SYNTHESIZER_DONE"
+    
+    # Thought process logs
+    THOUGHT_LOG = "THOUGHT_LOG"  # Generic thought chain entry
 
 
 @dataclass
@@ -35,7 +57,7 @@ class PipelineEvent:
     event_type: EventType
     query_id: str
     data: dict = field(default_factory=dict)
-    timestamp: float = field(default_factory=lambda: datetime.utcnow().timestamp())
+    timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
         return {

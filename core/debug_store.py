@@ -21,7 +21,7 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-DB_PATH = "council.db"
+DB_PATH = "zhenyi.db"
 
 
 async def init_debug_tables(db_path: str = DB_PATH):
@@ -44,6 +44,8 @@ async def init_debug_tables(db_path: str = DB_PATH):
                     request_headers_redacted BOOLEAN DEFAULT 1,
                     request_body_redacted   BOOLEAN DEFAULT 1,
                     estimated_tokens        INTEGER DEFAULT 0,
+                    tokens_in               INTEGER DEFAULT 0,
+                    payload_json            TEXT,
                     created_at              REAL,
                     batch_logged_at         REAL
                 );
@@ -63,6 +65,7 @@ async def init_debug_tables(db_path: str = DB_PATH):
                     actual_tokens_out       INTEGER DEFAULT 0,
                     latency_ms              REAL,
                     error_message           TEXT,
+                    payload_json            TEXT,
                     created_at              REAL,
                     batch_logged_at         REAL
                 );
@@ -79,6 +82,8 @@ async def init_debug_tables(db_path: str = DB_PATH):
                     duration_ms             REAL,
                     chunks_returned         INTEGER DEFAULT 0,
                     raw_output_path         TEXT,
+                    raw_output_json         TEXT,
+                    is_compressed           BOOLEAN DEFAULT 0,
                     error_message           TEXT,
                     circuit_breaker_state   TEXT,
                     created_at              REAL,
@@ -93,6 +98,8 @@ async def init_debug_tables(db_path: str = DB_PATH):
                     query_profile           TEXT,
                     selected_scrapers       TEXT,
                     selected_models         TEXT,
+                    plan_graph_json         TEXT,
+                    plan_hash               TEXT,
                     fallback_used           BOOLEAN DEFAULT 0,
                     constraints_applied     TEXT,
                     decision_tree_path      TEXT,
@@ -120,9 +127,12 @@ async def init_debug_tables(db_path: str = DB_PATH):
                 CREATE INDEX IF NOT EXISTS idx_api_requests_provider ON api_requests(provider, model);
                 CREATE INDEX IF NOT EXISTS idx_api_responses_query ON api_responses(query_id);
                 CREATE INDEX IF NOT EXISTS idx_api_responses_provider ON api_responses(provider, model);
+                CREATE INDEX IF NOT EXISTS idx_api_responses_error ON api_responses(error_message);
                 CREATE INDEX IF NOT EXISTS idx_scraper_invocations_query ON scraper_invocations(query_id);
                 CREATE INDEX IF NOT EXISTS idx_scraper_invocations_scraper ON scraper_invocations(scraper_name);
+                CREATE INDEX IF NOT EXISTS idx_scraper_invocations_circuit ON scraper_invocations(circuit_breaker_state);
                 CREATE INDEX IF NOT EXISTS idx_orchestrator_plan_query ON orchestrator_plan(query_id);
+                CREATE INDEX IF NOT EXISTS idx_orchestrator_plan_hash ON orchestrator_plan(plan_hash);
                 CREATE INDEX IF NOT EXISTS idx_agent_reasoning_query ON agent_reasoning(query_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_reasoning_agent ON agent_reasoning(agent_id);
             """)
@@ -138,22 +148,34 @@ async def log_api_request(
     provider: str,
     model: str,
     attempt: int,
-    request_payload_path: str,
+    request_payload_path: str = "",
     headers_redacted: bool = True,
     body_redacted: bool = True,
     estimated_tokens: int = 0,
+    payload_dict: dict = None,
+    tokens_in: int = 0,
     db_path: str = DB_PATH,
 ):
-    """Log API request metadata (deferred batch write)."""
+    """
+    Log API request metadata directly to DB.
+    Supports both legacy file path and new payload_dict approach.
+    If payload_dict provided, it's stored as JSON; otherwise request_payload_path is stored.
+    """
     try:
+        payload_json = None
+        if payload_dict:
+            payload_json = json.dumps(payload_dict, ensure_ascii=False)[:8000]
+        
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 """INSERT INTO api_requests
                 (query_id, agent_id, provider, model, attempt, request_payload_path,
-                 request_headers_redacted, request_body_redacted, estimated_tokens, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (query_id, agent_id, provider, model, attempt, request_payload_path,
-                 headers_redacted, body_redacted, estimated_tokens, time.time())
+                 request_headers_redacted, request_body_redacted, estimated_tokens, tokens_in,
+                 payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (query_id, agent_id, provider, model, attempt, request_payload_path or "",
+                 headers_redacted, body_redacted, estimated_tokens, tokens_in,
+                 payload_json, time.time())
             )
             await db.commit()
     except Exception as e:
@@ -166,27 +188,37 @@ async def log_api_response(
     provider: str,
     model: str,
     attempt: int,
-    response_payload_path: str,
+    response_payload_path: str = "",
     response_code: int = 200,
     response_redacted: bool = True,
     actual_tokens_in: int = 0,
     actual_tokens_out: int = 0,
     latency_ms: float = 0,
     error_message: str = "",
+    payload_dict: dict = None,
     db_path: str = DB_PATH,
 ):
-    """Log API response metadata (deferred batch write)."""
+    """
+    Log API response metadata directly to DB.
+    Supports both legacy file path and new payload_dict approach.
+    If payload_dict provided, it's stored as JSON; otherwise response_payload_path is stored.
+    """
     try:
+        payload_json = None
+        if payload_dict:
+            payload_json = json.dumps(payload_dict, ensure_ascii=False)[:8000]
+        
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 """INSERT INTO api_responses
                 (query_id, agent_id, provider, model, attempt, response_payload_path,
                  response_code, response_redacted, actual_tokens_in, actual_tokens_out,
-                 latency_ms, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (query_id, agent_id, provider, model, attempt, response_payload_path,
+                 latency_ms, error_message, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (query_id, agent_id, provider, model, attempt, response_payload_path or "",
                  response_code, response_redacted, actual_tokens_in, actual_tokens_out,
-                 latency_ms, error_message[:500] if error_message else "", time.time())
+                 latency_ms, error_message[:500] if error_message else "", 
+                 payload_json, time.time())
             )
             await db.commit()
     except Exception as e:
@@ -196,7 +228,7 @@ async def log_api_response(
 async def log_scraper_invocation(
     query_id: str,
     scraper_name: str,
-    scraper_config_path: str,
+    scraper_config_path: str = "",
     config_redacted: bool = True,
     start_time: float = None,
     end_time: float = None,
@@ -204,9 +236,15 @@ async def log_scraper_invocation(
     raw_output_path: str = "",
     error_message: str = "",
     circuit_breaker_state: str = "closed",
+    raw_output_dict: dict = None,
+    is_compressed: bool = False,
     db_path: str = DB_PATH,
 ):
-    """Log scraper invocation metadata."""
+    """
+    Log scraper invocation metadata directly to DB.
+    Supports both legacy raw_output_path and new raw_output_dict approach.
+    If raw_output_dict provided, it's stored as JSON; otherwise raw_output_path is stored.
+    """
     if start_time is None:
         start_time = time.time()
     if end_time is None:
@@ -215,15 +253,20 @@ async def log_scraper_invocation(
     duration_ms = (end_time - start_time) * 1000
     
     try:
+        raw_output_json = None
+        if raw_output_dict:
+            raw_output_json = json.dumps(raw_output_dict, ensure_ascii=False)[:10000]
+        
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 """INSERT INTO scraper_invocations
                 (query_id, scraper_name, scraper_config_path, config_redacted,
                  start_time, end_time, duration_ms, chunks_returned, raw_output_path,
-                 error_message, circuit_breaker_state, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (query_id, scraper_name, scraper_config_path, config_redacted,
-                 start_time, end_time, duration_ms, chunks_returned, raw_output_path,
+                 raw_output_json, is_compressed, error_message, circuit_breaker_state, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (query_id, scraper_name, scraper_config_path or "", config_redacted,
+                 start_time, end_time, duration_ms, chunks_returned, raw_output_path or "",
+                 raw_output_json, is_compressed,
                  error_message[:500] if error_message else "", circuit_breaker_state,
                  time.time())
             )
@@ -241,21 +284,30 @@ async def log_orchestrator_plan(
     fallback_used: bool = False,
     constraints_applied: str = "",
     decision_tree_path: str = "",
+    plan_graph_json: str = None,
+    plan_hash: str = None,
     db_path: str = DB_PATH,
 ):
-    """Log orchestrator planning decisions."""
+    """
+    Log orchestrator planning decisions with full graph data.
+    plan_graph_json: full orchestrator plan including nodes/edges as JSON string
+    plan_hash: hash of plan for future deduplication
+    """
     try:
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 """INSERT INTO orchestrator_plan
                 (query_id, reasoning, query_profile, selected_scrapers, selected_models,
-                 fallback_used, constraints_applied, decision_tree_path, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 plan_graph_json, plan_hash, fallback_used, constraints_applied, 
+                 decision_tree_path, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (query_id,
                  reasoning[:2000] if reasoning else "",
                  query_profile,
                  json.dumps(selected_scrapers),
                  json.dumps(selected_models),
+                 plan_graph_json or "",
+                 plan_hash or "",
                  fallback_used,
                  constraints_applied[:500] if constraints_applied else "",
                  decision_tree_path[:500] if decision_tree_path else "",

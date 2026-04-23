@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# COUNCIL CONFIGURATION
+# ZHENYI AGENT CONFIGURATION
 #
 # To add more keys: add new env var names to the keys list under each provider.
 # The env vars must also exist in your .env file.

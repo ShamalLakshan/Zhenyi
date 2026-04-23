@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 OPENMETEO_API_URL = "https://api.open-meteo.com/v1"
 HEADERS = {
-    "User-Agent": "LLM Research Agent (github.com/council-bot)"
+    "User-Agent": "Zhenyi Research Agent (github.com/zhenyi-research)",
 }
 
 

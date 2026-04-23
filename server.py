@@ -1,5 +1,5 @@
 """
-FastAPI Web Server for LLM Research Council
+FastAPI Web Server for Zhenyi - Intelligent Research Agent
 Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8000
 """
 
@@ -26,6 +26,7 @@ from core.pipeline import run
 from core.key_pool import KeyPool
 from core.state_store import init_db, get_recent_queries, get_thought_chain
 from core.debug_store import init_debug_tables
+from core.db_migration import migrate_to_latest, create_query_execution_table
 from scrapers.registry import ScraperRegistry
 
 load_dotenv()
@@ -40,14 +41,14 @@ logging.getLogger("server").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── Config ───────────────────────────────────────────────────────────────
-DB_PATH = os.getenv("DB_PATH", "council.db")
+DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 LOG_DIR = Path(os.getenv("LOG_DIR", "logs/queries"))
 MAX_QUERY_LENGTH = 2000
 MAX_RECENT_QUERIES = 100
 
 # ── FastAPI Setup ────────────────────────────────────────────────────────
 app = FastAPI(
-    title="LLM Research Council API",
+    title="Zhenyi - Research Agent API",
     description="Research query execution with real-time streaming",
     version="1.0.0",
 )
@@ -90,10 +91,12 @@ async def startup_event():
     try:
         logger.info("Starting up...")
         
-        # Initialize database
+        # Initialize database and run migrations
         await init_db(DB_PATH)
         await init_debug_tables(DB_PATH)
-        logger.info("Database initialized")
+        await migrate_to_latest(DB_PATH)
+        await create_query_execution_table(DB_PATH)
+        logger.info("Database initialized and migrations complete")
 
         # Initialize key pool
         pool = KeyPool("agents.yaml")
@@ -139,7 +142,7 @@ async def health_check():
     try:
         return HealthResponse(
             status="healthy",
-            timestamp=datetime.utcnow().timestamp(),
+            timestamp=time.time(),
             queries_running=len(running_queries),
         )
     except Exception as e:
@@ -155,7 +158,7 @@ async def system_status():
         
         return {
             "status": "running",
-            "timestamp": datetime.utcnow().timestamp(),
+            "timestamp": time.time(),
             "queries_running": len(running_queries),
             "key_pool": {
                 "providers": list(pool.pools.keys()) if pool else [],
@@ -198,8 +201,8 @@ async def submit_query(req: QueryRequest, background_tasks: BackgroundTasks):
 
                 logger.info(f"[{query_id}] Running pipeline for: {query_text[:50]}...")
 
-                # Run the pipeline
-                result = await run(query_text, pool, registry)
+                # Run the pipeline with the same query_id and event_bus for real-time events
+                result = await run(query_text, pool, registry, query_id=query_id, event_bus=event_bus)
                 
                 # Emit completion event
                 await event_bus.publish(
@@ -433,6 +436,150 @@ async def cancel_query(query_id: str):
     except Exception as e:
         logger.error(f"cancel_query error: {e}")
         raise HTTPException(status_code=500, detail="Failed to cancel query")
+
+
+# ── Database Debug Endpoints (DB-only logging) ──────────────────────────
+@app.get("/api/logs/{query_id}/graph")
+async def get_orchestrator_graph(query_id: str):
+    """
+    Get orchestrator plan graph (nodes/edges) from database.
+    Used by frontend to render pipeline visualization.
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT plan_graph_json FROM orchestrator_plan WHERE query_id = ?",
+                (query_id,)
+            )
+            row = await cursor.fetchone()
+            
+            if not row or not row["plan_graph_json"]:
+                # Fallback: return empty graph
+                return {
+                    "query_id": query_id,
+                    "nodes": [],
+                    "edges": [],
+                    "message": "No graph data found"
+                }
+            
+            # Parse and return the graph
+            graph_data = json.loads(row["plan_graph_json"])
+            return {"query_id": query_id, **graph_data}
+    except Exception as e:
+        logger.error(f"get_orchestrator_graph error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get graph")
+
+
+@app.get("/api/debug/{query_id}/full")
+async def get_full_debug_info(query_id: str):
+    """
+    Get complete debug information for a query from database.
+    Includes orchestrator plan, API requests/responses, scraper logs, agent reasoning.
+    """
+    try:
+        result = {
+            "query_id": query_id,
+            "orchestrator_plan": None,
+            "api_requests": [],
+            "api_responses": [],
+            "scraper_invocations": [],
+            "agent_reasoning": [],
+        }
+        
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            
+            # Get orchestrator plan
+            cursor = await db.execute(
+                "SELECT * FROM orchestrator_plan WHERE query_id = ?",
+                (query_id,)
+            )
+            row = await cursor.fetchone()
+            if row:
+                plan = dict(row)
+                # Parse JSON fields
+                if plan.get("plan_graph_json"):
+                    plan["plan_graph"] = json.loads(plan["plan_graph_json"])
+                result["orchestrator_plan"] = plan
+            
+            # Get API requests
+            cursor = await db.execute(
+                "SELECT * FROM api_requests WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,)
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                req = dict(row)
+                if req.get("payload_json"):
+                    req["payload"] = json.loads(req["payload_json"])
+                result["api_requests"].append(req)
+            
+            # Get API responses
+            cursor = await db.execute(
+                "SELECT * FROM api_responses WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,)
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                resp = dict(row)
+                if resp.get("payload_json"):
+                    resp["payload"] = json.loads(resp["payload_json"])
+                result["api_responses"].append(resp)
+            
+            # Get scraper invocations
+            cursor = await db.execute(
+                "SELECT * FROM scraper_invocations WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,)
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                scraper = dict(row)
+                if scraper.get("raw_output_json"):
+                    scraper["raw_output"] = json.loads(scraper["raw_output_json"])
+                result["scraper_invocations"].append(scraper)
+            
+            # Get agent reasoning
+            cursor = await db.execute(
+                "SELECT * FROM agent_reasoning WHERE query_id = ? ORDER BY step_number ASC",
+                (query_id,)
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                reasoning = dict(row)
+                result["agent_reasoning"].append(reasoning)
+        
+        return result
+    except Exception as e:
+        logger.error(f"get_full_debug_info error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get full debug info")
+
+
+@app.get("/api/keys/status")
+async def get_keys_status():
+    """
+    Get current status of all API keys in the key pool.
+    Shows ready/cooling/exhausted states for debugging.
+    """
+    try:
+        global pool
+        if not pool:
+            raise HTTPException(status_code=503, detail="Key pool not initialized")
+        
+        status = {}
+        for provider, keys in pool.pools.items():
+            status[provider] = [k.to_dict() for k in keys]
+        
+        return {
+            "providers": list(pool.pools.keys()),
+            "key_status": status,
+            "timestamp": time.time(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"get_keys_status error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get key status")
 
 
 # ── WebSocket Endpoints ─────────────────────────────────────────────────

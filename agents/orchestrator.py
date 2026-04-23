@@ -18,7 +18,11 @@ import asyncio
 import json
 import logging
 import re
+import warnings
 from typing import Optional
+
+# Suppress deprecation warning for google.generativeai (using stable version despite deprecation)
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
 
 import google.generativeai as genai
 
@@ -142,46 +146,72 @@ class OrchestratorAgent:
 
         prompt = self._build_prompt(query, snapshot)
 
-        try:
-            genai.configure(api_key=api_key)
-            gmodel = genai.GenerativeModel(model)
-            resp = await asyncio.to_thread(gmodel.generate_content, prompt)
-            raw = resp.text.strip()
-            key_state.record_usage(estimated_tokens=800)
+        # Try primary key first, then fallback keys on rate limit
+        tried_keys = [key_state]
+        
+        while tried_keys:
+            current_key_state = tried_keys.pop(0)
+            
+            try:
+                genai.configure(api_key=current_key_state.value)
+                gmodel = genai.GenerativeModel(model)
+                resp = await asyncio.to_thread(gmodel.generate_content, prompt)
+                raw = resp.text.strip()
+                current_key_state.record_usage(estimated_tokens=800)
+                logger.info(f"Orchestrator succeeded with {current_key_state.env_var}")
+                break
 
-        except Exception as e:
-            error_str = str(e)
-            is_rate_limit = any(
-                x in error_str.lower()
-                for x in ["429", "quota", "rate limit", "too many requests", "exceeded"]
-            )
-            if is_rate_limit:
-                delay = _extract_retry_delay(error_str)
-                key_state.set_cooldown(delay)
-                logger.warning(
-                    f"Orchestrator 429 — key {key_state.env_var} cooling for {delay:.0f}s. "
-                    f"Falling back to non-LLM plan."
+            except Exception as e:
+                error_str = str(e)
+                is_rate_limit = any(
+                    x in error_str.lower()
+                    for x in ["429", "quota", "rate limit", "too many requests", "exceeded"]
                 )
-            else:
-                key_state.record_error(is_rate_limit=False)
-                logger.error(f"Orchestrator API call failed: {e}")
-
+                
+                if is_rate_limit:
+                    current_key_state.record_error(is_rate_limit=True, is_quota=True)
+                    delay = _extract_retry_delay(error_str)
+                    current_key_state.set_cooldown(delay)
+                    
+                    logger.warning(
+                        f"Orchestrator 429 on {current_key_state.env_var} — "
+                        f"cooling for {delay:.0f}s. Trying fallback keys..."
+                    )
+                    
+                    # Try next fallback key
+                    fallback_keys = self.pool.get_fallback_keys("gemini")
+                    for fk in fallback_keys:
+                        if fk.env_var not in [k.env_var for k in [current_key_state] + tried_keys]:
+                            tried_keys.insert(0, fk)
+                            logger.info(f"Trying fallback key {fk.env_var}")
+                    
+                    if tried_keys:
+                        continue  # Try next key
+                    else:
+                        logger.error("No fallback keys available for orchestrator")
+                        raw = None  # Will fall back to non-LLM plan
+                else:
+                    current_key_state.record_error(is_rate_limit=False)
+                    logger.error(f"Orchestrator API call failed: {e}")
+                    raw = None  # Will fall back to non-LLM plan
+        
+        # Check if we got a successful response
+        if not raw or raw == "None":
             plan = self._fallback_plan(snapshot, query=query)
             await state_store.log_thought(
                 query_id, "orchestrator",
-                f"fallback: {'rate_limit' if is_rate_limit else str(e)[:80]}"
+                f"fallback: rate_limit (tried all keys)"
             )
             
             # Log fallback plan to debug context (non-blocking)
             if log_ctx and query_id:
                 try:
                     await log_ctx.log_orchestrator_plan(
-                        f"Orchestrator error: {'rate_limit' if is_rate_limit else str(e)[:80]}",
+                        f"Orchestrator rate limited on all keys, falling back",
                         plan.get("profile", "research"),
                         plan.get("scrapers", []),
                         plan.get("roles", {}),
-                        fallback_used=True,
-                        constraints=f"Error: {error_str[:200]}"
+                        fallback_used=True
                     )
                 except Exception as log_e:
                     logger.debug(f"Log orchestrator plan error (non-fatal): {log_e}")
@@ -213,7 +243,11 @@ class OrchestratorAgent:
         return plan
 
     def _build_prompt(self, query: str, snapshot: dict) -> str:
-        return f"""You are the orchestrator of a multi-LLM research council.
+        # Detect query intent for smart scraper suggestions
+        intent = self._detect_query_intent(query)
+        suggested_scrapers = QUERY_INTENT_KEYWORDS.get(intent, {}).get("scrapers", ["hackernews", "web"])
+        
+        return f"""You are the orchestrator of a research agent system.
 Analyse the user query and produce a JSON execution plan.
 
 USER QUERY:
@@ -224,28 +258,52 @@ AVAILABLE PROVIDERS (live state — only use providers listed here):
 
 AVAILABLE SCRAPERS: {AVAILABLE_SCRAPERS}
 
+SUGGESTED SCRAPERS FOR THIS QUERY: {suggested_scrapers}
+
 PLANNING RULES:
-Profile:
-  simple_factual  → stable facts, definitions, history. scrapers: []
-  current_factual → recent news, current status. scrapers: 1-2
-  research        → multiple sources needed. scrapers: 2-3
-  deep_research   → complex multi-domain. scrapers: all
+Profile selection and scraper requirements:
+  simple_factual  → for definitional/factual queries. scrapers: [] (direct LLM analysis only)
+  current_factual → for recent news/status. scrapers: MUST select 1-2 from suggested
+  research        → for multi-source queries. scrapers: MUST select 2-3 from suggested
+  deep_research   → for complex/philosophical/technical. scrapers: MUST select ALL suggested scrapers
+
+CRITICAL: The scraper count MUST match the profile:
+- If you choose "deep_research", you MUST include all suggested scrapers
+- If you choose "research", you MUST include 2-3 suggested scrapers
+- If you choose "current_factual", you MUST include 1-2 suggested scrapers
+- Only choose "simple_factual" if the query is asking for pure definitions/facts with NO external research needed
+
+For philosophical/ethical/hypothetical queries → use "deep_research" with suggested scrapers (for context/precedent research)
+For current events/news → use "current_factual" with news scrapers
+For general research → use "research" with multiple sources
 
 Role assignment:
   triage      → fastest provider (high daily_remaining + speed strength)
   analyst     → best reasoning provider
   synthesizer → synthesis/rag strength preferred
 
+Triage mode (choose based on query complexity):
+  scraper_only  → simple queries: fast heuristic scoring only
+  llm_only      → complex/nuanced queries: LLM scoring for all chunks
+  hybrid        → balanced: heuristic + LLM for borderline chunks (RECOMMENDED)
+
 CONSTRAINTS:
 - ONLY use providers in the snapshot with daily_remaining > 0
 - model string must be from that provider's "models" dict in snapshot
 - Include analyst_1 only if analyst_count >= 2, analyst_2 if >= 3, etc.
+- SCRAPER COUNT VALIDATION:
+  * If profile=simple_factual: scrapers must be empty []
+  * If profile=current_factual: scrapers must have 1-2 items from suggested list
+  * If profile=research: scrapers must have 2-3 items from suggested list  
+  * If profile=deep_research: scrapers must include ALL suggested scrapers
+- DO NOT override profile requirements based on reasoning. Profile MUST determine scraper count.
 
 Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
 {{
   "profile": "<simple_factual|current_factual|research|deep_research>",
   "scrapers": ["<names>"],
   "analyst_count": <1-4>,
+  "triage_mode": "<scraper_only|llm_only|hybrid>",
   "roles": {{
     "triage": {{"provider": "<name>", "model": "<model>"}},
     "analyst_0": {{"provider": "<name>", "model": "<model>"}},
@@ -290,8 +348,15 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
         plan.setdefault("profile", "research")
         plan.setdefault("scrapers", ["hackernews"])
         plan.setdefault("analyst_count", 1)
+        plan.setdefault("triage_mode", "hybrid")  # Default to hybrid mode
         plan.setdefault("roles", {})
         plan.setdefault("reasoning", "")
+
+        # Validate triage_mode
+        valid_modes = {"scraper_only", "llm_only", "hybrid"}
+        if plan["triage_mode"] not in valid_modes:
+            plan["triage_mode"] = "hybrid"
+            logger.warning(f"Invalid triage_mode, defaulting to hybrid")
 
         roles = plan["roles"]
 
@@ -429,6 +494,7 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
                 "profile": "research",
                 "scrapers": ["hackernews"],
                 "analyst_count": 1,
+                "triage_mode": "scraper_only",  # Fast fallback
                 "roles": {},
                 "reasoning": "Fallback: no providers available",
             }
@@ -444,6 +510,7 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
             "profile": "research",
             "scrapers": scrapers,
             "analyst_count": 1,
+            "triage_mode": "hybrid",  # Balanced approach for fallback
             "roles": {
                 "triage": {
                     "provider": fast,

@@ -16,7 +16,11 @@ import asyncio
 import json
 import logging
 import time
+import warnings
 from typing import Optional
+
+# Suppress deprecation warning for google.generativeai (being phased out for google.genai)
+warnings.filterwarnings("ignore", message=".*google.generativeai.*", category=FutureWarning)
 
 from core.key_pool import KeyPool, KeyState
 from core import state_store
@@ -64,30 +68,44 @@ class BaseAgent:
     ) -> str:
         """
         Call the LLM. Retries up to max_retries times with different keys.
+        On rate limit (429) or quota error, immediately tries next available fallback key.
         Returns empty string on total failure — never raises.
         Logs full request/response payloads to debug context if available.
         """
         last_error = ""
         log_ctx = get_log_context()
+        tried_keys = set()  # Track which keys we've already tried
         
         for attempt in range(max_retries + 1):
+            # Pick key: prefer ready, otherwise try fallback with most quota
             key = self.pool.pick(self.provider)
-
+            
             if key is None:
-                # All keys exhausted — wait for the shortest cooldown
-                fallback = self.pool.pick_or_wait(self.provider)
-                if fallback is None:
-                    logger.warning(f"[{self.agent_id}] No keys configured for {self.provider}")
-                    return ""
-                wait_time = max(0.0, fallback.cooldown_until - time.time())
-                if wait_time > 0 and wait_time < 70:
-                    logger.info(f"[{self.agent_id}] Waiting {wait_time:.0f}s for key cooldown")
-                    await asyncio.sleep(wait_time + 1)
-                key = self.pool.pick(self.provider)
-                if key is None:
-                    return ""
-
+                # No ready keys — try fallback keys we haven't used yet
+                fallback_keys = self.pool.get_fallback_keys(self.provider)
+                available_fallbacks = [k for k in fallback_keys if k.env_var not in tried_keys]
+                
+                if available_fallbacks:
+                    key = available_fallbacks[0]
+                    logger.info(f"[{self.agent_id}] Switching to fallback key {key.env_var} "
+                               f"({key.daily_remaining} quota remaining)")
+                else:
+                    # All keys exhausted or tried
+                    fallback = self.pool.pick_or_wait(self.provider)
+                    if fallback is None:
+                        logger.warning(f"[{self.agent_id}] No keys configured for {self.provider}")
+                        return ""
+                    wait_time = max(0.0, fallback.cooldown_until - time.time())
+                    if wait_time > 0 and wait_time < 70:
+                        logger.info(f"[{self.agent_id}] Waiting {wait_time:.0f}s for key cooldown")
+                        await asyncio.sleep(wait_time + 1)
+                    key = self.pool.pick(self.provider)
+                    if key is None:
+                        return ""
+            
+            tried_keys.add(key.env_var)
             t0 = time.time()
+            
             try:
                 # Log request (if logging context available, non-blocking)
                 request_dict = {
@@ -127,21 +145,25 @@ class BaseAgent:
                     await state_store.log_agent_output(
                         query_id, self.agent_id, self.provider,
                         self.model, latency,
-                        {"preview": result[:300], "attempt": attempt}
+                        {"preview": result[:300], "attempt": attempt, "key": key.env_var}
                     )
                 return result
 
             except Exception as e:
                 last_error = str(e)
                 latency = (time.time() - t0) * 1000
-                is_rate_limit = any(
-                    x in last_error.lower()
-                    for x in ["429", "rate limit", "quota", "too many requests"]
-                )
-                key.record_error(is_rate_limit=is_rate_limit)
+                error_lower = last_error.lower()
+                
+                # Classify error type
+                is_rate_limit = "429" in error_lower
+                is_quota = any(x in error_lower for x in ["quota", "exceeded", "out of quota"])
+                is_recoverable = is_rate_limit or is_quota
+                
+                key.record_error(is_rate_limit=is_rate_limit, is_quota=is_quota)
+                
                 logger.warning(
                     f"[{self.agent_id}] attempt {attempt+1}/{max_retries+1} "
-                    f"failed ({self.provider}): {last_error[:120]}"
+                    f"failed ({self.provider}, {key.env_var}): {last_error[:120]}"
                 )
                 
                 # Log error response (if logging context available, non-blocking)
@@ -155,10 +177,22 @@ class BaseAgent:
                     except Exception as e:
                         logger.debug(f"[{self.agent_id}] Log error response failed (non-fatal): {e}")
                 
+                # If rate limit or quota, try fallback key immediately (don't wait)
+                if is_recoverable and attempt < max_retries:
+                    fallback_keys = self.pool.get_fallback_keys(self.provider)
+                    available_fallbacks = [k for k in fallback_keys if k.env_var not in tried_keys]
+                    if available_fallbacks:
+                        logger.info(f"[{self.agent_id}] Rate limit/quota on {key.env_var}, "
+                                   f"trying fallback immediately")
+                        continue  # Try next iteration with fallback key
+                
+                # For non-recoverable errors or if no more fallbacks, back off
                 if attempt < max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    wait_seconds = 2 ** attempt
+                    logger.debug(f"[{self.agent_id}] Backing off for {wait_seconds}s before retry")
+                    await asyncio.sleep(wait_seconds)
 
-        logger.error(f"[{self.agent_id}] All attempts failed. Last: {last_error[:200]}")
+        logger.error(f"[{self.agent_id}] All {max_retries+1} attempts failed. Last: {last_error[:200]}")
         return ""
 
     async def _call_provider(self, key: KeyState, prompt: str) -> str:

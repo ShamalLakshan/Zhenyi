@@ -1,4 +1,4 @@
-# LLM Research Council — Developer Documentation
+# Zhenyi — Intelligent Research Synthesizer — Developer Documentation
 
 > Complete reference for anyone continuing or extending this project.
 
@@ -186,7 +186,7 @@ Pipeline returns:
 ## 4. File Reference
 
 ```
-council/
+zhenyi/
 │
 ├── main.py                     Entry point. CLI loop, output formatting,
 │                               /status /history /chain commands.
@@ -478,7 +478,7 @@ async def _call_provider(self, key: KeyState, prompt: str) -> str:
 
 ## 10. Database Schema
 
-The SQLite database (`council.db`) has 4 tables.
+The SQLite database (`zhenyi.db`) has 4 tables.
 
 ### `chunks`
 One row per scraped chunk that passed triage.
@@ -613,12 +613,12 @@ state_store in `pipeline.py`.
 ## 13. CLI Commands
 
 ```
-council> <any text>       Run a research query
-council> /status          Key pool quota and scraper circuit breaker status
-council> /history         Last 10 queries with query_id, profile, confidence
-council> /chain <id>      Full thought chain for a query (use id from /history)
-council> /help            Command list
-council> /quit            Exit
+zhenyi> <any text>       Run a research query
+zhenyi> /status          Key pool quota and scraper circuit breaker status
+zhenyi> /history         Last 10 queries with query_id, profile, confidence
+zhenyi> /chain <id>      Full thought chain for a query (use id from /history)
+zhenyi> /help            Command list
+zhenyi> /quit            Exit
 ```
 
 ### Reading `/status`
@@ -662,11 +662,11 @@ system used its heuristic fallback plan. The rest of the pipeline still ran.
 Gemini quota exhausted. The system falls back automatically. To fix:
 - Wait for quota reset (midnight Pacific time)
 - Add more Gemini keys from different accounts
-- Check `council.log` for the cooldown duration
+- Check console logs for the cooldown duration
 
 ### "0 chunks from hackernews"
 The topic has no HN coverage, or the keyword distillation produced terms with
-no matches. Check `council.log` for the distilled query terms. Try enabling
+no matches. Check console logs for the distilled query terms. Try enabling
 the web scraper.
 
 ### "All analysts failed to return results"
@@ -674,13 +674,13 @@ Usually a rate limit cascade — all providers exhausted simultaneously. Check
 `/status` to see key states. Wait for cooldowns or add more keys.
 
 ### Analyst returns bad JSON
-Check `council.log` for `[analyst_X] JSON parse failed, wrapping raw text`.
+Check console logs for `[analyst_X] JSON parse failed, wrapping raw text`.
 This is non-fatal — the raw text becomes a finding. If it happens consistently
 for one provider, that provider's model may not follow JSON instructions well.
 Try a different model in `agents.yaml` for that provider.
 
 ### Scraper circuit open
-`[scraper_name] Circuit OPEN after 3 consecutive failures` in `council.log`.
+`[scraper_name] Circuit OPEN after 3 consecutive failures` in console logs.
 The scraper will auto-recover after 5 minutes. To force immediate reset,
 restart the program.
 
@@ -691,13 +691,13 @@ All keys are either unconfigured (empty in `.env`) or in cooldown. Check
 ### Checking logs
 ```bash
 # All errors and warnings from the last run
-grep -E "ERROR|WARNING" council.log | tail -50
+# Check console output for ERROR/WARNING messages during server execution
 
 # Everything for a specific query
-grep "1fa0fe08" council.log
+# See logs/queries/1fa0fe08/ for this query's execution trace
 
 # Orchestrator decisions
-grep "orchestrator" council.log | tail -20
+# Check logs/queries/*/orchestrator_plan.json for orchestrator decisions
 ```
 
 ---

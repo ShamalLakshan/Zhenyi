@@ -47,8 +47,12 @@ class DdgsScraper(BaseScraper):
         Run in thread pool to avoid blocking.
         """
         try:
-            # Lazy import
-            from duckduckgo_search import DDGS
+            # Lazy import (use new 'ddgs' package name)
+            try:
+                from ddgs import DDGS
+            except ImportError:
+                # Fallback for older installations
+                from duckduckgo_search import DDGS
             
             results = []
             try:

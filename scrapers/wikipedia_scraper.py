@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 WIKIPEDIA_API_URL = "https://en.wikipedia.org/w/api.php"
 HEADERS = {
-    "User-Agent": "LLM Research Agent (github.com/council-bot)"
+    "User-Agent": "Zhenyi Research Agent (github.com/zhenyi-research)",
 }
 
 

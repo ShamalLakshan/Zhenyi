@@ -19,7 +19,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-DB_PATH = "council.db"
+DB_PATH = "zhenyi.db"
 
 
 async def get_query_audit(query_id: str, db_path: str = DB_PATH) -> Dict[str, Any]:

@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-DB_PATH = "council.db"
+DB_PATH = "zhenyi.db"
 
 
 async def init_db(db_path: str = DB_PATH):

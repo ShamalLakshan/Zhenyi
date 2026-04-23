@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 OPENALEX_API_URL = "https://api.openalex.org/works"
 HEADERS = {
-    "User-Agent": "LLM Research Agent (github.com/council-bot)"
+    "User-Agent": "Zhenyi Research Agent (github.com/zhenyi-research)",
 }
 
 

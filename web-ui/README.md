@@ -1,6 +1,6 @@
-# LLM Research Council - Web UI
+# Zhenyi - Web UI
 
-A modern React-based web interface for the LLM Research Council pipeline. Features real-time monitoring, interactive pipeline visualization, and detailed logging.
+A modern React-based web interface for the Zhenyi intelligent research agent. Features real-time monitoring, interactive pipeline visualization, and detailed logging.
 
 ## Prerequisites
 

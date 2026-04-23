@@ -1,39 +1,39 @@
 """
-Custom exceptions for the Council pipeline.
+Custom exceptions for the Zhenyi research pipeline.
 All exceptions are non-fatal by design — callers catch and degrade gracefully.
 """
 
 
-class CouncilError(Exception):
-    """Base exception for all council errors."""
+class ZhenyiError(Exception):
+    """Base exception for all Zhenyi errors."""
     pass
 
 
-class NoAvailableKeysError(CouncilError):
+class NoAvailableKeysError(ZhenyiError):
     """Raised when all keys for a provider are exhausted or in cooldown."""
     pass
 
 
-class OrchestratorError(CouncilError):
+class OrchestratorError(ZhenyiError):
     """Raised when the orchestrator fails to produce a valid plan."""
     pass
 
 
-class ScraperError(CouncilError):
+class ScraperError(ZhenyiError):
     """Raised by a scraper when it cannot retrieve data."""
     pass
 
 
-class AgentError(CouncilError):
+class AgentError(ZhenyiError):
     """Raised when an LLM agent call fails after retries."""
     pass
 
 
-class ParseError(CouncilError):
+class ParseError(ZhenyiError):
     """Raised when an agent response cannot be parsed."""
     pass
 
 
-class ConfigError(CouncilError):
+class ConfigError(ZhenyiError):
     """Raised on invalid configuration."""
     pass

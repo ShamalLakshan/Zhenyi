@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 SEC_API_URL = "https://data.sec.gov/api/xrls"
 SEC_COMPANY_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
 HEADERS = {
-    "User-Agent": "LLM Research Agent (github.com/council-bot) contact@example.com"
+    "User-Agent": "Zhenyi Research Agent (github.com/zhenyi-research) contact@example.com"
 }
 
 

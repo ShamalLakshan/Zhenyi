@@ -29,6 +29,7 @@ from core.key_pool import KeyPool
 from core import state_store
 from core import debug_store
 from core.redaction import redact_request_payload, redact_response_payload, safe_json_dumps
+from core.events import EventBus, PipelineEvent, EventType
 from scrapers.registry import ScraperRegistry
 from agents.orchestrator import OrchestratorAgent
 from agents.triage import TriageAgent
@@ -271,16 +272,32 @@ def _make_agent_from_role(role_cfg: dict, role_name: str, pool: KeyPool):
         return AnalystAgent(role_name, pool, provider=provider, model=model)
 
 
-async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
+async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: str = None, event_bus: EventBus = None) -> dict:
     """
     Execute the full research pipeline for a query.
     Always returns a dict with: query_id, profile, answer, confidence, sources, plan.
     
     Logs all operations (scrapers, models, reasoning) if logging is enabled.
     On successful completion, all logs are batch-written to DB and files.
+    
+    Args:
+        query: The research query string
+        pool: KeyPool for API credentials
+        registry: ScraperRegistry for available scrapers
+        query_id: Optional query ID; if not provided, generates a new one
+        event_bus: Optional EventBus for emitting real-time events
     """
-    query_id = str(uuid.uuid4())[:8]
+    if query_id is None:
+        query_id = str(uuid.uuid4())[:8]
     t_start = time.time()
+    
+    # Get event bus if not provided
+    if event_bus is None:
+        try:
+            event_bus = await EventBus.get_instance()
+        except Exception as e:
+            logger.debug(f"Could not get event bus: {e}")
+            event_bus = None
     
     # Initialize debug tables on first run
     try:
@@ -297,6 +314,17 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
             # ── Stage 1: Orchestrator Planning ────────────────────────────────────────
             print(f"\n[{query_id}] {query[:70]}")
             print("  [1/5] Planning...")
+            
+            # Emit orchestrator start event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.ORCHESTRATOR_STARTED,
+                        query_id,
+                        {"query": query, "query_id": query_id}
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit ORCHESTRATOR_STARTED: {e}")
 
             try:
                 orchestrator = OrchestratorAgent(pool)
@@ -351,6 +379,17 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
             # ── Stage 2: Scraping ─────────────────────────────────────────────────────
             print(f"  [2/5] Scraping {scrapers}...")
             await state_store.log_thought(query_id, "scrape_start", str(scrapers))
+            
+            # Emit scraper started event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.SCRAPER_STARTED,
+                        query_id,
+                        {"scrapers": scrapers, "query": query}
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit SCRAPER_STARTED: {e}")
 
             try:
                 chunks = await registry.run(scrapers, query, log_ctx=log_ctx, query_id=query_id)
@@ -362,36 +401,179 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
             chunks = chunks[:max_chunks]
             print(f"         got {len(chunks)} raw chunks")
             await state_store.log_thought(query_id, "scraped", f"{len(chunks)} chunks")
+            
+            # Emit chunks collected event with detailed chunk data
+            if event_bus:
+                try:
+                    chunk_summary = [
+                        {
+                            "index": i,
+                            "source": c.get("source", "unknown"),
+                            "title": c.get("title", "")[:100],
+                            "url": c.get("url", ""),
+                            "length": len(c.get("content", ""))
+                        }
+                        for i, c in enumerate(chunks)
+                    ]
+                    await event_bus.publish(PipelineEvent(
+                        EventType.CHUNKS_COLLECTED,
+                        query_id,
+                        {
+                            "total_chunks": len(chunks),
+                            "chunks": chunk_summary,
+                            "raw_chunks_full": chunks  # Include full data for persistence
+                        }
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit CHUNKS_COLLECTED: {e}")
 
-            if not chunks:
-                await state_store.log_thought(query_id, "done", "no data from scrapers")
+            # ── Stage 2b: LLM-Generated Chunks (augment scraper data) ──────────────────
+            # Call LLM providers to generate diverse perspectives as chunks
+            # These will be triaged alongside scraper data
+            llm_chunks = []
+            if roles.get("analyst_0"):  # If we have analyst roles, get their perspectives
+                print(f"  [2b/5] Gathering LLM perspectives...")
+                llm_perspective_tasks = []
+                
+                # Get up to 2 analyst perspectives as additional chunks
+                for i in range(min(2, plan.get("analyst_count", 1))):
+                    analyst_key = f"analyst_{i}"
+                    analyst_cfg = roles.get(analyst_key)
+                    if analyst_cfg:
+                        llm_perspective_tasks.append(
+                            _get_llm_perspective_as_chunk(
+                                query, analyst_cfg, pool, query_id, log_ctx, analyst_key
+                            )
+                        )
+                
+                if llm_perspective_tasks:
+                    perspectives = await asyncio.gather(*llm_perspective_tasks, return_exceptions=True)
+                    for perspective in perspectives:
+                        if isinstance(perspective, dict) and perspective.get("content"):
+                            llm_chunks.append(perspective)
+                    
+                    if llm_chunks:
+                        print(f"         got {len(llm_chunks)} LLM-generated chunks")
+            
+            # Combine scraper chunks + LLM chunks for triage
+            all_chunks = chunks + llm_chunks
+            
+            if not all_chunks:
+                await state_store.log_thought(query_id, "done", "no data from scrapers or llm")
                 await log_ctx.batch_mark_success()
+                if event_bus:
+                    try:
+                        await event_bus.publish(PipelineEvent(
+                            EventType.SCRAPER_DONE,
+                            query_id,
+                            {"chunks_collected": 0, "status": "no_data"}
+                        ))
+                    except Exception as e:
+                        logger.debug(f"Could not emit SCRAPER_DONE: {e}")
                 return _empty_result(query_id, profile, plan,
-                                     "No data found from any scraper.", t_start)
+                                     "No data found from any scraper or LLM.", t_start)
 
             # ── Stage 3: Triage ───────────────────────────────────────────────────────
             print("  [3/5] Triaging...")
+            
+            # Emit triage started event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.TRIAGE_STARTED,
+                        query_id,
+                        {"total_chunks": len(chunks), "threshold": threshold if threshold else 6}
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit TRIAGE_STARTED: {e}")
+            
             triage_cfg = roles.get("triage")
             if not triage_cfg:
                 triage_cfg = _pick_fallback_role(pool, "speed")
 
             threshold = pool.get_threshold("relevance_min_score", 6)
+            triage_mode = plan.get("triage_mode", "hybrid")  # Get mode from plan
 
             try:
                 triage = _make_agent_from_role(triage_cfg, "triage", pool)
-                scored = await triage.score_chunks(query, chunks, threshold, query_id)
+                scored = await triage.score_chunks(
+                    query, all_chunks, threshold, 
+                    query_id=query_id,
+                    mode=triage_mode  # Pass triage mode to agent
+                )
             except Exception as e:
                 logger.error(f"[{query_id}] Triage error: {e}")
                 scored = chunks  # pass all through on triage failure
+            
+            # Emit chunks scored event (if scoring happened)
+            if event_bus and scored != all_chunks:
+                try:
+                    scored_summary = [
+                        {
+                            "index": i,
+                            "source": c.get("source", "unknown"),
+                            "title": c.get("title", "")[:100],
+                            "score": c.get("relevance_score", 0),
+                            "url": c.get("url", "")
+                        }
+                        for i, c in enumerate(scored)
+                    ]
+                    await event_bus.publish(PipelineEvent(
+                        EventType.CHUNKS_SCORED,
+                        query_id,
+                        {
+                            "scored_chunks": scored_summary,
+                            "total_scored": len(scored),
+                            "threshold": threshold
+                        }
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit CHUNKS_SCORED: {e}")
 
             # Safety net — if triage filtered everything out, keep top chunks
             if not scored:
                 logger.warning(f"[{query_id}] Triage removed all chunks — keeping top 3")
-                scored = chunks[:3]
+                scored = all_chunks[:3]
 
             await state_store.save_chunks(query_id, scored)
-            await state_store.log_thought(query_id, "triage", f"kept {len(scored)}/{len(chunks)}")
-            print(f"         kept {len(scored)}/{len(chunks)}")
+            await state_store.log_thought(query_id, "triage", f"kept {len(scored)}/{len(all_chunks)}")
+            print(f"         kept {len(scored)}/{len(all_chunks)}")
+            
+            # Emit chunks filtered event
+            if event_bus:
+                try:
+                    filtered_summary = [
+                        {
+                            "index": i,
+                            "source": c.get("source", "unknown"),
+                            "title": c.get("title", "")[:100],
+                            "url": c.get("url", "")
+                        }
+                        for i, c in enumerate(scored)
+                    ]
+                    await event_bus.publish(PipelineEvent(
+                        EventType.CHUNKS_FILTERED,
+                        query_id,
+                        {
+                            "filtered_chunks": filtered_summary,
+                            "kept": len(scored),
+                            "total": len(chunks),
+                            "dropped": len(chunks) - len(scored)
+                        }
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit CHUNKS_FILTERED: {e}")
+            
+            # Emit triage done event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.TRIAGE_DONE,
+                        query_id,
+                        {"chunks_remaining": len(scored), "chunks_dropped": len(chunks) - len(scored)}
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit TRIAGE_DONE: {e}")
 
             # ── Stage 4: Parallel Analysis ────────────────────────────────────────────
             analyst_keys = sorted(
@@ -403,9 +585,45 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
             analyst_count = len(analyst_keys)
             print(f"  [4/5] Running {analyst_count} analyst(s) in parallel...")
             await state_store.log_thought(query_id, "analyse_start", f"{analyst_count} analysts")
+            
+            # Emit analyst start event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.ANALYST_START,
+                        query_id,
+                        {"analyst_count": analyst_count, "total_chunks": len(scored)}
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit ANALYST_START: {e}")
 
             # Distribute chunks evenly across analysts
             chunk_slices = _split_chunks(scored, analyst_count)
+            
+            # Emit analyst chunk slices
+            if event_bus:
+                try:
+                    for i, key in enumerate(analyst_keys):
+                        chunk_slice = chunk_slices[i] if i < len(chunk_slices) else scored
+                        slice_summary = [
+                            {
+                                "index": j,
+                                "source": c.get("source", "unknown"),
+                                "title": c.get("title", "")[:80]
+                            }
+                            for j, c in enumerate(chunk_slice)
+                        ]
+                        await event_bus.publish(PipelineEvent(
+                            EventType.ANALYST_CHUNK_SLICE,
+                            query_id,
+                            {
+                                "analyst_id": key,
+                                "chunk_count": len(chunk_slice),
+                                "chunks": slice_summary
+                            }
+                        ))
+                except Exception as e:
+                    logger.debug(f"Could not emit ANALYST_CHUNK_SLICE: {e}")
 
             analyst_tasks = []
             for i, key in enumerate(analyst_keys):
@@ -429,6 +647,21 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
             await state_store.log_thought(
                 query_id, "analysed", f"{len(analyst_outputs)} outputs"
             )
+            
+            # Emit analyst done event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.ANALYST_DONE,
+                        query_id,
+                        {
+                            "successful_analysts": len(analyst_outputs),
+                            "total_analysts": analyst_count,
+                            "total_findings": sum(len(o.get("key_findings", [])) for o in analyst_outputs)
+                        }
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit ANALYST_DONE: {e}")
 
             if not analyst_outputs:
                 await log_ctx.batch_mark_success()
@@ -439,6 +672,21 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
 
             # ── Stage 5: Synthesis ────────────────────────────────────────────────────
             print("  [5/5] Synthesizing...")
+            
+            # Emit synthesizer started event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.SYNTHESIZER_STARTED,
+                        query_id,
+                        {
+                            "analyst_outputs": len(analyst_outputs),
+                            "total_findings": sum(len(o.get("key_findings", [])) for o in analyst_outputs)
+                        }
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit SYNTHESIZER_STARTED: {e}")
+            
             synth_cfg = roles.get("synthesizer")
             if not synth_cfg:
                 synth_cfg = _pick_fallback_role(pool, "synthesis")
@@ -457,6 +705,21 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
                     "answer": "\n".join(findings) or "Synthesis failed.",
                     "confidence": 0.3,
                 }
+            
+            # Emit synthesizer done event
+            if event_bus:
+                try:
+                    await event_bus.publish(PipelineEvent(
+                        EventType.SYNTHESIZER_DONE,
+                        query_id,
+                        {
+                            "answer_length": len(final.get("answer", "")),
+                            "confidence": final.get("confidence", 0),
+                            "has_sources": len([c.get("url", "") for c in scored if c.get("url")]) > 0
+                        }
+                    ))
+                except Exception as e:
+                    logger.debug(f"Could not emit SYNTHESIZER_DONE: {e}")
 
             sources = list({c.get("url", "") for c in scored if c.get("url")})
             duration = (time.time() - t_start) * 1000
@@ -489,6 +752,47 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry) -> dict:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _get_llm_perspective_as_chunk(
+    query: str,
+    analyst_cfg: dict,
+    pool: KeyPool,
+    query_id: str,
+    log_ctx,
+    analyst_id: str
+) -> dict:
+    """
+    Call an LLM analyst and convert their response into a chunk for triage.
+    Returns a dict with structure: {content, source, title, url, llm_provider, llm_model}
+    """
+    try:
+        agent = _make_agent_from_role(analyst_cfg, analyst_id, pool)
+        provider = analyst_cfg.get("provider", "unknown")
+        model = analyst_cfg.get("model", "unknown")
+        
+        prompt = f"""Provide a focused, concise perspective on this query in 2-3 sentences:
+
+Query: {query}
+
+Give your most important insight or analysis."""
+        
+        response = await agent.call(prompt, query_id=query_id)
+        
+        if response:
+            return {
+                "content": response,
+                "source": f"llm_{provider}",
+                "title": f"LLM Perspective ({provider})",
+                "url": "",
+                "llm_provider": provider,
+                "llm_model": model,
+                "is_llm_generated": True,
+            }
+    except Exception as e:
+        logger.debug(f"[{query_id}] LLM perspective error ({analyst_id}): {e}")
+    
+    return {}
+
 
 def _split_chunks(chunks: list, n: int) -> list[list]:
     """Split chunks into n roughly equal slices."""
