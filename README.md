@@ -16,7 +16,7 @@ Named after Wang Zhenyi (1768–1797), a pioneering Chinese mathematician and as
 
 ```bash
 # 1. Clone and setup
-git clone https://github.com/yourusername/zhenyi.git
+git clone https://github.com/ShamalLakshan/zhenyi.git
 cd zhenyi
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate

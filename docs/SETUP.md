@@ -12,7 +12,7 @@
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/zhenyi.git
+git clone https://github.com/ShamalLakshan/zhenyi.git
 cd zhenyi
 ```
 
