@@ -16,11 +16,10 @@ import asyncio
 import json
 import logging
 import time
-import warnings
 from typing import Optional
 
-# Suppress deprecation warning for google.generativeai (being phased out for google.genai)
-warnings.filterwarnings("ignore", message=".*google.generativeai.*", category=FutureWarning)
+from google import genai
+from google.genai import errors
 
 from core.key_pool import KeyPool, KeyState
 from core import state_store
@@ -209,12 +208,15 @@ class BaseAgent:
             return await self._call_openai_compatible(key.value, prompt)
 
     async def _call_gemini(self, api_key: str, prompt: str) -> str:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(self.model)
-        # Gemini SDK is synchronous — run in thread pool to avoid blocking event loop
-        resp = await asyncio.to_thread(model.generate_content, prompt)
-        return resp.text.strip()
+        client = genai.Client(api_key=api_key)
+        try:
+            resp = await client.aio.models.generate_content(
+                model=self.model,
+                contents=prompt
+            )
+            return resp.text.strip()
+        finally:
+            client.close()
 
     async def _call_cohere(self, api_key: str, prompt: str) -> str:
         import cohere
