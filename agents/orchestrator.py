@@ -18,13 +18,10 @@ import asyncio
 import json
 import logging
 import re
-import warnings
 from typing import Optional
 
-# Suppress deprecation warning for google.generativeai (using stable version despite deprecation)
-warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
-
-import google.generativeai as genai
+from google import genai
+from google.genai import errors
 
 from core.key_pool import KeyPool
 from core import state_store
@@ -75,17 +72,23 @@ QUERY_INTENT_KEYWORDS = {
 }
 
 
-def _extract_retry_delay(error_str: str) -> float:
+def _extract_retry_delay(error: Exception) -> float:
     """
-    Parse the retry_delay seconds from a Gemini 429 error string.
+    Extract retry_delay seconds from google-genai APIError or other error.
+    For 429 errors, tries to get delay from error details.
     Returns 65.0 as a safe default if not found.
     """
-    match = re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+)', error_str)
-    if match:
-        return float(match.group(1)) + 2.0
-    match2 = re.search(r'retry in\s+([\d.]+)s', error_str)
-    if match2:
-        return float(match2.group(1)) + 2.0
+    # Try to get delay from APIError details
+    if isinstance(error, errors.APIError):
+        if hasattr(error, 'details') and error.details:
+            # Check for retry_info in details
+            if isinstance(error.details, dict):
+                retry_info = error.details.get('retry_info', {})
+                if isinstance(retry_info, dict) and 'retry_delay' in retry_info:
+                    delay_dict = retry_info['retry_delay']
+                    if isinstance(delay_dict, dict) and 'seconds' in delay_dict:
+                        return float(delay_dict['seconds']) + 2.0
+    # Fallback: safe default delay
     return 65.0
 
 
@@ -153,24 +156,25 @@ class OrchestratorAgent:
             current_key_state = tried_keys.pop(0)
             
             try:
-                genai.configure(api_key=current_key_state.value)
-                gmodel = genai.GenerativeModel(model)
-                resp = await asyncio.to_thread(gmodel.generate_content, prompt)
-                raw = resp.text.strip()
-                current_key_state.record_usage(estimated_tokens=800)
-                logger.info(f"Orchestrator succeeded with {current_key_state.env_var}")
-                break
+                client = genai.Client(api_key=current_key_state.value)
+                try:
+                    resp = await client.aio.models.generate_content(
+                        model=model,
+                        contents=prompt
+                    )
+                    raw = resp.text.strip()
+                    current_key_state.record_usage(estimated_tokens=800)
+                    logger.info(f"Orchestrator succeeded with {current_key_state.env_var}")
+                    break
+                finally:
+                    client.close()
 
             except Exception as e:
-                error_str = str(e)
-                is_rate_limit = any(
-                    x in error_str.lower()
-                    for x in ["429", "quota", "rate limit", "too many requests", "exceeded"]
-                )
+                is_rate_limit = isinstance(e, errors.APIError) and e.code == 429
                 
                 if is_rate_limit:
                     current_key_state.record_error(is_rate_limit=True, is_quota=True)
-                    delay = _extract_retry_delay(error_str)
+                    delay = _extract_retry_delay(e)
                     current_key_state.set_cooldown(delay)
                     
                     logger.warning(
