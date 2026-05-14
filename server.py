@@ -10,6 +10,7 @@ import os
 import shutil
 import time
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -45,6 +46,92 @@ DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 LOG_DIR = Path(os.getenv("LOG_DIR", "logs/queries"))
 MAX_QUERY_LENGTH = 2000
 MAX_RECENT_QUERIES = 100
+
+
+def _safe_json_load(value: Optional[str], fallback):
+    if not value:
+        return fallback
+    try:
+        return json.loads(value)
+    except Exception:
+        return fallback
+
+
+def _build_execution_graph(scrapers: list[dict], api_calls: list[dict]) -> dict:
+    nodes = [
+        {"id": "orchestrator", "label": "Orchestrator", "type": "stage"},
+        {"id": "triage", "label": "Triage", "type": "stage"},
+        {"id": "analysis", "label": "Analysis", "type": "stage"},
+        {"id": "synthesizer", "label": "Synthesis", "type": "stage"},
+        {"id": "output", "label": "Output", "type": "stage"},
+    ]
+    edges = [
+        {"from": "orchestrator", "to": "triage"},
+        {"from": "triage", "to": "analysis"},
+        {"from": "analysis", "to": "synthesizer"},
+        {"from": "synthesizer", "to": "output"},
+    ]
+
+    scraper_seen = set()
+    for scraper in scrapers:
+        scraper_name = (scraper.get("scraper_name") or "unknown").lower()
+        node_id = f"scraper-{scraper_name}"
+        if node_id in scraper_seen:
+            continue
+        scraper_seen.add(node_id)
+        nodes.append(
+            {
+                "id": node_id,
+                "label": scraper_name,
+                "type": "scraper",
+                "chunks": scraper.get("chunks_returned", 0),
+                "duration_ms": scraper.get("duration_ms", 0),
+            }
+        )
+        edges.append({"from": "orchestrator", "to": node_id})
+        edges.append({"from": node_id, "to": "triage"})
+
+    model_seen = set()
+    for call in api_calls:
+        provider = (call.get("provider") or "unknown").lower()
+        model = call.get("model") or "unknown"
+        role = (call.get("agent_id") or "agent").lower()
+        node_id = f"model-{provider}-{model}".replace("/", "-")
+        if node_id not in model_seen:
+            model_seen.add(node_id)
+            nodes.append(
+                {
+                    "id": node_id,
+                    "label": f"{provider}:{model}",
+                    "type": "model",
+                    "provider": provider,
+                    "model": model,
+                }
+            )
+
+        if role.startswith("analyst"):
+            edges.append({"from": "analysis", "to": node_id})
+            edges.append({"from": node_id, "to": "analysis"})
+        elif role == "triage":
+            edges.append({"from": "triage", "to": node_id})
+            edges.append({"from": node_id, "to": "triage"})
+        elif role == "synthesizer":
+            edges.append({"from": "synthesizer", "to": node_id})
+            edges.append({"from": node_id, "to": "synthesizer"})
+        else:
+            edges.append({"from": "orchestrator", "to": node_id})
+
+    # Remove duplicate edges while preserving order.
+    dedup = set()
+    unique_edges = []
+    for edge in edges:
+        key = (edge["from"], edge["to"])
+        if key in dedup:
+            continue
+        dedup.add(key)
+        unique_edges.append(edge)
+
+    return {"nodes": nodes, "edges": unique_edges}
 
 # ── FastAPI Setup ────────────────────────────────────────────────────────
 app = FastAPI(
@@ -210,10 +297,13 @@ async def submit_query(req: QueryRequest, background_tasks: BackgroundTasks):
                         EventType.QUERY_DONE,
                         query_id,
                         {
+                            "query_id": query_id,
                             "answer": result.get("answer", ""),
                             "confidence": result.get("confidence", 0.0),
                             "profile": result.get("profile", ""),
                             "duration_ms": result.get("duration_ms", 0),
+                            "sources": result.get("sources", []),
+                            "plan": result.get("plan", {}),
                         },
                     )
                 )
@@ -289,7 +379,9 @@ async def get_query(query_id: str):
             if not row:
                 raise HTTPException(status_code=404, detail="Query not found")
 
-            return dict(row)
+            result = dict(row)
+            result["plan"] = _safe_json_load(result.get("plan_json"), {})
+            return result
     except HTTPException:
         raise
     except Exception as e:
@@ -314,7 +406,14 @@ async def delete_query(query_id: str):
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("DELETE FROM queries WHERE query_id = ?", (query_id,))
-            await db.execute("DELETE FROM thoughts WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM thought_chain WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM chunks WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM agent_outputs WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM orchestrator_plan WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM api_requests WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM api_responses WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM scraper_invocations WHERE query_id = ?", (query_id,))
+            await db.execute("DELETE FROM agent_reasoning WHERE query_id = ?", (query_id,))
             await db.commit()
 
         log_path = LOG_DIR / query_id
@@ -361,11 +460,18 @@ async def get_debug(query_id: str, stage: Optional[str] = None):
             log_ref = stage_mapping.get(stage)
             if log_ref is None:
                 # Get query result for output panel
-                from core.state_store import get_query
-                result = await get_query(query_id)
-                if not result:
-                    raise HTTPException(status_code=404, detail="Query not found")
-                return {"query_id": query_id, "stage": stage, "data": result}
+                async with aiosqlite.connect(DB_PATH) as db:
+                    db.row_factory = aiosqlite.Row
+                    cursor = await db.execute(
+                        "SELECT * FROM queries WHERE query_id = ?",
+                        (query_id,),
+                    )
+                    row = await cursor.fetchone()
+                    if not row:
+                        raise HTTPException(status_code=404, detail="Query not found")
+                    query_data = dict(row)
+                    query_data["plan"] = _safe_json_load(query_data.get("plan_json"), {})
+                    return {"query_id": query_id, "stage": stage, "data": query_data}
             
             log_target = log_path / log_ref
             
@@ -553,6 +659,190 @@ async def get_full_debug_info(query_id: str):
     except Exception as e:
         logger.error(f"get_full_debug_info error: {e}")
         raise HTTPException(status_code=500, detail="Failed to get full debug info")
+
+
+@app.get("/api/queries/{query_id}/execution")
+async def get_query_execution(query_id: str):
+    """Get normalized execution details for graph + result analytics views."""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            cursor = await db.execute(
+                "SELECT * FROM queries WHERE query_id = ?",
+                (query_id,),
+            )
+            query_row = await cursor.fetchone()
+            if not query_row:
+                raise HTTPException(status_code=404, detail="Query not found")
+            query_data = dict(query_row)
+
+            cursor = await db.execute(
+                "SELECT * FROM orchestrator_plan WHERE query_id = ?",
+                (query_id,),
+            )
+            plan_row = await cursor.fetchone()
+            orchestrator_plan = dict(plan_row) if plan_row else None
+
+            cursor = await db.execute(
+                "SELECT * FROM api_responses WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,),
+            )
+            api_rows = [dict(r) for r in await cursor.fetchall()]
+
+            cursor = await db.execute(
+                "SELECT * FROM scraper_invocations WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,),
+            )
+            scraper_rows = [dict(r) for r in await cursor.fetchall()]
+
+            cursor = await db.execute(
+                "SELECT source, url, content, relevance_score, created_at FROM chunks WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,),
+            )
+            chunk_rows = [dict(r) for r in await cursor.fetchall()]
+
+            cursor = await db.execute(
+                "SELECT step, note, created_at FROM thought_chain WHERE query_id = ? ORDER BY created_at ASC",
+                (query_id,),
+            )
+            thought_rows = [dict(r) for r in await cursor.fetchall()]
+
+        total_tokens = sum((row.get("actual_tokens_in") or 0) + (row.get("actual_tokens_out") or 0) for row in api_rows)
+        provider_usage = defaultdict(lambda: {
+            "provider": "",
+            "calls": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "latency_ms": 0.0,
+        })
+        for row in api_rows:
+            provider = row.get("provider") or "unknown"
+            provider_usage[provider]["provider"] = provider
+            provider_usage[provider]["calls"] += 1
+            provider_usage[provider]["tokens_in"] += row.get("actual_tokens_in") or 0
+            provider_usage[provider]["tokens_out"] += row.get("actual_tokens_out") or 0
+            provider_usage[provider]["latency_ms"] += row.get("latency_ms") or 0
+
+        provider_breakdown = []
+        for usage in provider_usage.values():
+            provider_tokens = usage["tokens_in"] + usage["tokens_out"]
+            usage["usage_pct"] = round((provider_tokens / total_tokens) * 100, 2) if total_tokens else 0.0
+            provider_breakdown.append(usage)
+        provider_breakdown.sort(key=lambda x: x["usage_pct"], reverse=True)
+
+        total_scraper_chunks = sum(row.get("chunks_returned") or 0 for row in scraper_rows)
+        scraper_map = defaultdict(lambda: {"name": "", "calls": 0, "chunks": 0, "duration_ms": 0.0})
+        for row in scraper_rows:
+            name = row.get("scraper_name") or "unknown"
+            scraper_map[name]["name"] = name
+            scraper_map[name]["calls"] += 1
+            scraper_map[name]["chunks"] += row.get("chunks_returned") or 0
+            scraper_map[name]["duration_ms"] += row.get("duration_ms") or 0
+
+        scraper_breakdown = []
+        for usage in scraper_map.values():
+            usage["usage_pct"] = round((usage["chunks"] / total_scraper_chunks) * 100, 2) if total_scraper_chunks else 0.0
+            scraper_breakdown.append(usage)
+        scraper_breakdown.sort(key=lambda x: x["usage_pct"], reverse=True)
+
+        stage_metrics = {
+            "orchestrator_ms": sum((r.get("latency_ms") or 0) for r in api_rows if (r.get("agent_id") or "") == "orchestrator"),
+            "triage_ms": sum((r.get("latency_ms") or 0) for r in api_rows if (r.get("agent_id") or "") == "triage"),
+            "analysis_ms": sum((r.get("latency_ms") or 0) for r in api_rows if (r.get("agent_id") or "").startswith("analyst_")),
+            "synthesis_ms": sum((r.get("latency_ms") or 0) for r in api_rows if (r.get("agent_id") or "") == "synthesizer"),
+            "scraping_ms": sum((r.get("duration_ms") or 0) for r in scraper_rows),
+        }
+        stage_total_ms = sum(stage_metrics.values())
+        stage_breakdown = [
+            {
+                "name": "Plan",
+                "value": round(stage_metrics["orchestrator_ms"], 2),
+                "usage_pct": round((stage_metrics["orchestrator_ms"] / stage_total_ms) * 100, 2) if stage_total_ms else 0.0,
+            },
+            {
+                "name": "Crawl",
+                "value": round(stage_metrics["scraping_ms"], 2),
+                "usage_pct": round((stage_metrics["scraping_ms"] / stage_total_ms) * 100, 2) if stage_total_ms else 0.0,
+            },
+            {
+                "name": "Triage",
+                "value": round(stage_metrics["triage_ms"], 2),
+                "usage_pct": round((stage_metrics["triage_ms"] / stage_total_ms) * 100, 2) if stage_total_ms else 0.0,
+            },
+            {
+                "name": "Analyst",
+                "value": round(stage_metrics["analysis_ms"], 2),
+                "usage_pct": round((stage_metrics["analysis_ms"] / stage_total_ms) * 100, 2) if stage_total_ms else 0.0,
+            },
+            {
+                "name": "Synth",
+                "value": round(stage_metrics["synthesis_ms"], 2),
+                "usage_pct": round((stage_metrics["synthesis_ms"] / stage_total_ms) * 100, 2) if stage_total_ms else 0.0,
+            },
+        ]
+
+        graph = _build_execution_graph(scraper_rows, api_rows)
+        if orchestrator_plan and orchestrator_plan.get("plan_graph_json"):
+            persisted_graph = _safe_json_load(orchestrator_plan.get("plan_graph_json"), {})
+            if persisted_graph.get("nodes"):
+                graph["nodes"] = persisted_graph["nodes"]
+            if persisted_graph.get("edges"):
+                graph["edges"] = persisted_graph["edges"]
+
+        return {
+            "query_id": query_id,
+            "summary": {
+                "query": query_data.get("query_text", ""),
+                "profile": query_data.get("profile", "research"),
+                "confidence": query_data.get("confidence", 0.0),
+                "duration_ms": query_data.get("duration_ms", 0.0),
+                "plan": _safe_json_load(query_data.get("plan_json"), {}),
+                "sources": [
+                    chunk.get("url")
+                    for chunk in chunk_rows
+                    if chunk.get("url")
+                ][:20],
+            },
+            "graph": graph,
+            "usage": {
+                "providers": provider_breakdown,
+                "scrapers": scraper_breakdown,
+                "total_tokens": total_tokens,
+            },
+            "stages": {
+                "breakdown": stage_breakdown,
+                "metrics": stage_metrics,
+                "thought_chain": thought_rows,
+            },
+            "chunks": {
+                "filtered": [
+                    {
+                        "source": chunk.get("source", "unknown"),
+                        "url": chunk.get("url", ""),
+                        "content": chunk.get("content", ""),
+                        "score": chunk.get("relevance_score", 0),
+                        "stage": "filtered",
+                    }
+                    for chunk in chunk_rows
+                ],
+                "counts": {
+                    "filtered": len(chunk_rows),
+                    "raw": sum(row.get("chunks_returned") or 0 for row in scraper_rows),
+                    "scored": len(chunk_rows),
+                },
+            },
+            "debug": {
+                "api_calls": len(api_rows),
+                "scraper_calls": len(scraper_rows),
+                "orchestrator_plan": orchestrator_plan,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"get_query_execution error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get query execution")
 
 
 @app.get("/api/keys/status")

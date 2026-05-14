@@ -1,0 +1,115 @@
+import axios from 'axios';
+
+const API_BASE = '/api';
+
+const apiClient = axios.create({
+  baseURL: API_BASE,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+export interface QuerySubmitResponse {
+  query_id: string;
+}
+
+export interface QueryHistoryItem {
+  query_id: string;
+  query_text: string;
+  profile: string;
+  confidence: number;
+  created_at: number;
+}
+
+export interface QueryResult {
+  query_id: string;
+  answer: string;
+  confidence: number;
+  profile: string;
+  duration_ms: number;
+  plan?: Record<string, unknown>;
+  sources?: string[];
+}
+
+export interface UsageEntry {
+  name?: string;
+  provider?: string;
+  usage_pct: number;
+  value?: number;
+  calls?: number;
+  chunks?: number;
+}
+
+export interface StageBreakdownItem {
+  name: string;
+  value: number;
+  usage_pct: number;
+}
+
+export interface ExecutionGraph {
+  nodes: Array<Record<string, any>>;
+  edges: Array<{ from: string; to: string }>;
+}
+
+export interface QueryExecution {
+  query_id: string;
+  summary: {
+    query: string;
+    profile: string;
+    confidence: number;
+    duration_ms: number;
+    plan: Record<string, any>;
+    sources: string[];
+  };
+  graph: ExecutionGraph;
+  usage: {
+    providers: UsageEntry[];
+    scrapers: UsageEntry[];
+    total_tokens: number;
+  };
+  stages: {
+    breakdown: StageBreakdownItem[];
+    metrics: Record<string, number>;
+    thought_chain: Array<Record<string, any>>;
+  };
+  chunks: {
+    filtered: Array<Record<string, any>>;
+    counts: {
+      filtered: number;
+      raw: number;
+      scored: number;
+    };
+  };
+  debug: {
+    api_calls: number;
+    scraper_calls: number;
+    orchestrator_plan: Record<string, any> | null;
+  };
+}
+
+export const api = {
+  // Query Management
+  submitQuery: (query: string, focusArea?: string) => 
+    apiClient.post<QuerySubmitResponse>('/query', { query, focus_area: focusArea }),
+  
+  getQuery: (queryId: string) => 
+    apiClient.get<QueryResult>(`/queries/${queryId}`),
+
+  getExecution: (queryId: string) =>
+    apiClient.get<QueryExecution>(`/queries/${queryId}/execution`),
+  
+  getHistory: (limit = 50) => 
+    apiClient.get<{ queries: QueryHistoryItem[] }>('/history', { params: { limit } }),
+  
+  deleteQuery: (queryId: string) => 
+    apiClient.delete(`/queries/${queryId}`),
+
+  // WebSocket
+  connectQueryStream: (queryId: string) => {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = window.location.host;
+    return new WebSocket(`${protocol}://${host}/ws/query/${queryId}`);
+  }
+};
+
+export default api;
