@@ -1,35 +1,62 @@
-# Environment Variables
+# Environment variables and local overrides
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.sample
 
-# Python
+# Python virtual environments and bytecode
 venv/
 .venv/
 env/
 ENV/
+.python-version
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 *$py.class
 *.so
 .Python
 *.egg-info/
-dist/
-build/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.nox/
+.tox/
 .coverage
+.coverage.*
 htmlcov/
 
-# Node.js / npm / Vite
+# Node / package manager artifacts
 node_modules/
-npm-debug.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-dist/
+pnpm-debug.log*
 .vite/
+.turbo/
+.parcel-cache/
 
-# IDE / Editor
+# Build / distribution outputs
+build/
+dist/
+out/
+coverage/
+test-results/
+*.tsbuildinfo
+
+# Application data, logs, and databases
+logs/
+logs/queries/
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Editor and IDE settings
 .vscode/
 .idea/
 *.swp
@@ -38,33 +65,21 @@ dist/
 *.iml
 .sublime-workspace
 .sublime-project
-*.vim
 
-# OS
+# Operating system files
 .DS_Store
 Thumbs.db
-*.bak
+Desktop.ini
+ehthumbs.db
 
-# Database & Logs
-*.db
-*.db-wal
-*.db-shm
-*.log
-logs/
-*.sqlite
-*.sqlite3
-
-# Build artifacts
-build/
-dist/
-.turbo/
-
-# Local test files
-test-results/
-coverage/
-
-# Misc
+# Misc local caches and temporary files
 .cache/
+.eslintcache
 *.tmp
 *.temp
-.eslintcache
+*.bak
+
+# Repository-specific generated content
+project-assets/*.tmp
+new-zhenyi-ui/dist/
+web-ui/dist/

@@ -176,7 +176,12 @@ export default function App() {
   }, [loadExecution, loadHistory]);
 
   // Handle Query Submission
-  const handleSubmitQuery = async (query: string, focusArea?: string) => {
+  const handleSubmitQuery = async (
+    query: string,
+    focusArea?: string,
+    llmRatio = 70,
+    scraperRatio = 30,
+  ) => {
     try {
       setStatus('submitting');
       setQueryResult(null);
@@ -187,7 +192,12 @@ export default function App() {
       setSelectedChunk(null);
       setCurrentQuery(query);
       
-      const res = await api.submitQuery(query, focusArea);
+      const res = await api.submitQuery({
+        query,
+        focusArea,
+        llmRatio,
+        scraperRatio,
+      });
       const newQueryId = res.data.query_id;
       setQueryId(newQueryId);
       setStatus('running');
@@ -298,6 +308,8 @@ export default function App() {
                       providerUsage={execution?.usage?.providers}
                       scraperUsage={execution?.usage?.scrapers}
                       sources={queryResult.sources || execution?.summary?.sources || []}
+                      ratioControls={execution?.summary?.controls as any}
+                      ratioMetrics={execution?.summary?.execution_metrics?.ratio_delta as any}
                     />
                   </div>
                   <div className="min-h-0 overflow-hidden border border-border rounded-xl bg-zinc-950/10 p-4">

@@ -13,6 +13,13 @@ export interface QuerySubmitResponse {
   query_id: string;
 }
 
+export interface QuerySubmissionOptions {
+  query: string;
+  focusArea?: string;
+  llmRatio?: number;
+  scraperRatio?: number;
+}
+
 export interface QueryHistoryItem {
   query_id: string;
   query_text: string;
@@ -59,6 +66,8 @@ export interface QueryExecution {
     confidence: number;
     duration_ms: number;
     plan: Record<string, any>;
+    controls: Record<string, any>;
+    execution_metrics: Record<string, any>;
     sources: string[];
   };
   graph: ExecutionGraph;
@@ -89,8 +98,13 @@ export interface QueryExecution {
 
 export const api = {
   // Query Management
-  submitQuery: (query: string, focusArea?: string) => 
-    apiClient.post<QuerySubmitResponse>('/query', { query, focus_area: focusArea }),
+  submitQuery: ({ query, focusArea, llmRatio = 70, scraperRatio = 30 }: QuerySubmissionOptions) => 
+    apiClient.post<QuerySubmitResponse>('/query', {
+      query,
+      focus_area: focusArea,
+      llm_ratio: llmRatio,
+      scraper_ratio: scraperRatio,
+    }),
   
   getQuery: (queryId: string) => 
     apiClient.get<QueryResult>(`/queries/${queryId}`),

@@ -15,7 +15,7 @@ import logging
 import re
 import asyncio
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 from agents.base_agent import BaseAgent
 from core.key_pool import KeyPool
 
@@ -45,6 +45,8 @@ class TriageAgent(BaseAgent):
         threshold: float,
         query_id: str = "",
         mode: Literal["scraper_only", "llm_only", "hybrid"] = "hybrid",
+        query_controls: Optional[dict] = None,
+        selection_cap: Optional[int] = None,
     ) -> list[dict]:
         """
         Score all chunks and return only those above threshold.
@@ -60,6 +62,11 @@ class TriageAgent(BaseAgent):
         """
         if not chunks:
             return []
+
+        query_controls = query_controls or {}
+        ratio_controls = query_controls.get("ratio_controls", {})
+        llm_ratio = int(ratio_controls.get("llm_ratio", 50))
+        scraper_ratio = int(ratio_controls.get("scraper_ratio", 50))
         
         if mode == "scraper_only":
             scored = await self._score_chunks_scraper_only(query, chunks, query_id)
@@ -67,14 +74,24 @@ class TriageAgent(BaseAgent):
             scored = await self._score_chunks_llm_only(query, chunks, query_id)
         else:  # hybrid
             scored = await self._score_chunks_hybrid(query, chunks, query_id)
-        
-        # Filter by threshold
-        kept = [c for c in scored if c.get("relevance_score", 0) >= threshold]
-        logger.info(
-            f"[triage] mode={mode} kept {len(kept)}/{len(chunks)} chunks "
-            f"(threshold={threshold})"
+
+        scored = [c for c in scored if c.get("relevance_score", 0) >= threshold]
+
+        if selection_cap is None:
+            selection_cap = len(scored)
+
+        selected = self._apply_ratio_selection(
+            scored,
+            selection_cap=selection_cap,
+            llm_ratio=llm_ratio,
+            scraper_ratio=scraper_ratio,
         )
-        return kept
+        
+        logger.info(
+            f"[triage] mode={mode} kept {len(selected)}/{len(chunks)} chunks "
+            f"(threshold={threshold}, target={llm_ratio}:{scraper_ratio})"
+        )
+        return selected
 
     async def _score_chunks_scraper_only(
         self,
@@ -88,6 +105,7 @@ class TriageAgent(BaseAgent):
         
         for chunk in chunks:
             score = self._heuristic_score(query, chunk, query_words)
+            self._mark_chunk_source(chunk)
             chunk["relevance_score"] = score
             chunk["scoring_method"] = "scraper_heuristic"
             scored.append(chunk)
@@ -104,6 +122,7 @@ class TriageAgent(BaseAgent):
         scored = []
         for chunk in chunks:
             score = await self._score_one_llm(query, chunk, query_id)
+            self._mark_chunk_source(chunk)
             chunk["relevance_score"] = score
             chunk["scoring_method"] = "llm"
             scored.append(chunk)
@@ -129,6 +148,7 @@ class TriageAgent(BaseAgent):
         
         for chunk in chunks:
             scraper_score = self._heuristic_score(query, chunk, query_words)
+            self._mark_chunk_source(chunk)
             
             if scraper_score >= 9 or scraper_score <= 2:
                 # High confidence from scraper — use as-is
@@ -202,6 +222,53 @@ class TriageAgent(BaseAgent):
         
         total = keyword_score + source_score + spec_score + length_score
         return min(10.0, total)
+
+    def _mark_chunk_source(self, chunk: dict) -> None:
+        """Normalize source classification for downstream ratio selection and telemetry."""
+        source = str(chunk.get("source", "")).lower()
+        chunk["is_llm_generated"] = bool(chunk.get("is_llm_generated")) or source.startswith("llm_")
+        chunk["source_kind"] = "llm" if chunk["is_llm_generated"] else "scraper"
+
+    def _apply_ratio_selection(
+        self,
+        chunks: list[dict],
+        selection_cap: int,
+        llm_ratio: int,
+        scraper_ratio: int,
+    ) -> list[dict]:
+        if not chunks:
+            return []
+
+        capped = min(selection_cap, len(chunks))
+        desired_llm = round(capped * (llm_ratio / 100.0))
+        desired_scraper = capped - desired_llm
+
+        llm_chunks = sorted(
+            [chunk for chunk in chunks if chunk.get("is_llm_generated")],
+            key=lambda item: item.get("relevance_score", 0),
+            reverse=True,
+        )
+        scraper_chunks = sorted(
+            [chunk for chunk in chunks if not chunk.get("is_llm_generated")],
+            key=lambda item: item.get("relevance_score", 0),
+            reverse=True,
+        )
+
+        selected = llm_chunks[:desired_llm] + scraper_chunks[:desired_scraper]
+
+        if len(selected) < capped:
+            remainder = sorted(
+                [chunk for chunk in chunks if chunk not in selected],
+                key=lambda item: item.get("relevance_score", 0),
+                reverse=True,
+            )
+            for chunk in remainder:
+                if len(selected) >= capped:
+                    break
+                selected.append(chunk)
+
+        # Preserve deterministic ordering by relevance while keeping the best ratio fit.
+        return sorted(selected, key=lambda item: item.get("relevance_score", 0), reverse=True)
 
     async def _score_one_llm(
         self,

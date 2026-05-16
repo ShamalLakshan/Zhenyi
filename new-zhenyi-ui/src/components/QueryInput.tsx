@@ -2,21 +2,35 @@ import React, { useState } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Play, Sparkles, Zap } from "lucide-react";
+import { Sparkles, Zap } from "lucide-react";
 import { motion } from "motion/react";
 
 interface QueryInputProps {
-  onSubmit: (query: string, focusArea?: string) => void;
+  onSubmit: (query: string, focusArea?: string, llmRatio?: number, scraperRatio?: number) => void;
   isLoading: boolean;
 }
 
 export function QueryInput({ onSubmit, isLoading }: QueryInputProps) {
   const [query, setQuery] = useState("");
+  const [llmRatio, setLlmRatio] = useState(70);
+  const [scraperRatio, setScraperRatio] = useState(30);
+
+  const syncLlmRatio = (value: number) => {
+    const normalized = Math.max(0, Math.min(100, value));
+    setLlmRatio(normalized);
+    setScraperRatio(100 - normalized);
+  };
+
+  const syncScraperRatio = (value: number) => {
+    const normalized = Math.max(0, Math.min(100, value));
+    setScraperRatio(normalized);
+    setLlmRatio(100 - normalized);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
-      onSubmit(query);
+      onSubmit(query, undefined, llmRatio, scraperRatio);
     }
   };
 
@@ -46,7 +60,7 @@ export function QueryInput({ onSubmit, isLoading }: QueryInputProps) {
             <div className="relative group p-1 bg-zinc-950 border border-zinc-800 rounded-2xl focus-within:border-primary/50 transition-all">
               <Textarea
                 placeholder="Initialize intelligence flow..."
-                className="min-h-[140px] bg-transparent border-none text-sm resize-none focus-visible:ring-0 placeholder:text-zinc-700 p-4 font-medium"
+                className="min-h-35 bg-transparent border-none text-sm resize-none focus-visible:ring-0 placeholder:text-zinc-700 p-4 font-medium"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 disabled={isLoading}
@@ -63,6 +77,58 @@ export function QueryInput({ onSubmit, isLoading }: QueryInputProps) {
                     "Launch Flow"
                   )}
                 </Button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.25em] text-zinc-500">Execution Ratio</p>
+                  <p className="text-[11px] text-zinc-400 mt-1">Shift the balance before the query starts</p>
+                </div>
+                <div className="text-right text-[10px] font-black uppercase tracking-[0.25em] text-zinc-400">
+                  <div>LLM {llmRatio}%</div>
+                  <div>Scraper {scraperRatio}%</div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500">
+                  LLM Share
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={llmRatio}
+                  onChange={(e) => syncLlmRatio(Number(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="space-y-2">
+                  <span className="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500">LLM %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={llmRatio}
+                    onChange={(e) => syncLlmRatio(Number(e.target.value || 0))}
+                    className="w-full h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm outline-none focus:border-primary/50"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500">Scraper %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={scraperRatio}
+                    onChange={(e) => syncScraperRatio(Number(e.target.value || 0))}
+                    className="w-full h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm outline-none focus:border-primary/50"
+                  />
+                </label>
               </div>
             </div>
           </form>

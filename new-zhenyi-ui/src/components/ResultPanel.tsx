@@ -26,6 +26,17 @@ interface ResultPanelProps {
   providerUsage?: UsageEntry[];
   scraperUsage?: UsageEntry[];
   sources?: string[];
+  ratioControls?: {
+    llm_ratio?: number;
+    scraper_ratio?: number;
+  };
+  ratioMetrics?: {
+    requested_llm_ratio?: number;
+    requested_scraper_ratio?: number;
+    achieved_llm_ratio?: number;
+    achieved_scraper_ratio?: number;
+    deviation_reason?: string;
+  };
 }
 
 export function ResultPanel({
@@ -38,6 +49,8 @@ export function ResultPanel({
   providerUsage,
   scraperUsage,
   sources,
+  ratioControls,
+  ratioMetrics,
 }: ResultPanelProps) {
   const [copied, setCopied] = useState(false);
 
@@ -81,6 +94,28 @@ export function ResultPanel({
           animate={{ opacity: 1, y: 0 }}
           className="flex-1 min-h-0 flex flex-col gap-6"
         >
+          {(ratioControls || ratioMetrics) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+                <p className="text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500 mb-2">Requested Ratio</p>
+                <div className="flex items-center justify-between text-sm font-bold text-zinc-200">
+                  <span>LLM {ratioControls?.llm_ratio ?? ratioMetrics?.requested_llm_ratio ?? 0}%</span>
+                  <span>Scraper {ratioControls?.scraper_ratio ?? ratioMetrics?.requested_scraper_ratio ?? 0}%</span>
+                </div>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+                <p className="text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500 mb-2">Achieved Ratio</p>
+                <div className="flex items-center justify-between text-sm font-bold text-zinc-200">
+                  <span>LLM {ratioMetrics?.achieved_llm_ratio ?? 0}%</span>
+                  <span>Scraper {ratioMetrics?.achieved_scraper_ratio ?? 0}%</span>
+                </div>
+                {ratioMetrics?.deviation_reason && (
+                  <p className="mt-2 text-[10px] text-zinc-500 uppercase tracking-widest">{ratioMetrics.deviation_reason}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-4 h-full relative">
             <div className="w-8 h-8 rounded bg-primary shrink-0 flex items-center justify-center text-[9px] text-white font-black uppercase shadow-lg shadow-primary/20">ZY</div>
             <Card className="flex flex-col flex-1 min-h-0 border-zinc-800 shadow-2xl overflow-hidden rounded-2xl rounded-tl-none bg-zinc-900/50 backdrop-blur-3xl">

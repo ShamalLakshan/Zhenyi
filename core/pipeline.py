@@ -24,6 +24,7 @@ import uuid
 import json
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from core.key_pool import KeyPool
 from core import state_store
@@ -272,7 +273,14 @@ def _make_agent_from_role(role_cfg: dict, role_name: str, pool: KeyPool):
         return AnalystAgent(role_name, pool, provider=provider, model=model)
 
 
-async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: str = None, event_bus: EventBus = None) -> dict:
+async def run(
+    query: str,
+    pool: KeyPool,
+    registry: ScraperRegistry,
+    query_id: str = None,
+    event_bus: EventBus = None,
+    query_controls: Optional[dict] = None,
+) -> dict:
     """
     Execute the full research pipeline for a query.
     Always returns a dict with: query_id, profile, answer, confidence, sources, plan.
@@ -290,6 +298,10 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
     if query_id is None:
         query_id = str(uuid.uuid4())[:8]
     t_start = time.time()
+    query_controls = query_controls or {}
+    ratio_controls = query_controls.get("ratio_controls", {})
+    llm_ratio = int(ratio_controls.get("llm_ratio", 50))
+    scraper_ratio = int(ratio_controls.get("scraper_ratio", 50))
     
     # Get event bus if not provided
     if event_bus is None:
@@ -328,12 +340,12 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
 
             try:
                 orchestrator = OrchestratorAgent(pool)
-                plan = await orchestrator.plan(query, query_id, log_ctx)
+                plan = await orchestrator.plan(query, query_id, log_ctx, query_controls=query_controls)
             except Exception as e:
                 logger.error(f"[{query_id}] Orchestrator failed: {e}")
                 plan = {
                     "profile": "research",
-                    "scrapers": ["hackernews"],
+                    "scrapers": list(pool.config.get("scrapers", {}).keys()),
                     "analyst_count": 1,
                     "roles": {},
                     "reasoning": f"Orchestrator failed: {e}",
@@ -341,8 +353,10 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
 
             profile     = plan.get("profile", "research")
             roles       = plan.get("roles", {})
-            scrapers    = plan.get("scrapers", ["hackernews"])
+            scrapers    = plan.get("scrapers", [])
             reasoning   = plan.get("reasoning", "")
+            plan["query_controls"] = query_controls
+            plan["ratio_controls"] = ratio_controls
 
             print(f"       profile={profile} | scrapers={scrapers}")
             print(f"       reason: {reasoning}")
@@ -436,7 +450,8 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
                 llm_perspective_tasks = []
                 
                 # Get up to 2 analyst perspectives as additional chunks
-                for i in range(min(2, plan.get("analyst_count", 1))):
+                llm_perspective_target = max(1, min(4, round(llm_ratio / 25) or 1))
+                for i in range(min(plan.get("analyst_count", 1), llm_perspective_target)):
                     analyst_key = f"analyst_{i}"
                     analyst_cfg = roles.get(analyst_key)
                     if analyst_cfg:
@@ -482,7 +497,11 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
                     await event_bus.publish(PipelineEvent(
                         EventType.TRIAGE_STARTED,
                         query_id,
-                        {"total_chunks": len(chunks), "threshold": threshold if threshold else 6}
+                        {
+                            "total_chunks": len(all_chunks),
+                            "threshold": pool.get_threshold("relevance_min_score", 6),
+                            "requested_ratio": ratio_controls,
+                        }
                     ))
                 except Exception as e:
                     logger.debug(f"Could not emit TRIAGE_STARTED: {e}")
@@ -499,11 +518,35 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
                 scored = await triage.score_chunks(
                     query, all_chunks, threshold, 
                     query_id=query_id,
-                    mode=triage_mode  # Pass triage mode to agent
+                    mode=triage_mode,  # Pass triage mode to agent
+                    query_controls=query_controls,
+                    selection_cap=pool.get_threshold("max_chunks", 20),
                 )
             except Exception as e:
                 logger.error(f"[{query_id}] Triage error: {e}")
                 scored = chunks  # pass all through on triage failure
+
+            selected_llm = sum(1 for c in scored if c.get("is_llm_generated") or str(c.get("source", "")).lower().startswith("llm_"))
+            selected_scraper = max(0, len(scored) - selected_llm)
+            desired_llm = round(len(scored) * (llm_ratio / 100.0)) if scored else 0
+            desired_scraper = len(scored) - desired_llm if scored else 0
+            scarcity_reason = None
+            if desired_llm and selected_llm < desired_llm:
+                scarcity_reason = "llm_scarcity"
+            elif desired_scraper and selected_scraper < desired_scraper:
+                scarcity_reason = "scraper_scarcity"
+            ratio_delta = {
+                "requested_llm_ratio": llm_ratio,
+                "requested_scraper_ratio": scraper_ratio,
+                "achieved_llm_ratio": round((selected_llm / len(scored)) * 100, 2) if scored else 0,
+                "achieved_scraper_ratio": round((selected_scraper / len(scored)) * 100, 2) if scored else 0,
+                "deviation_reason": scarcity_reason or "relevance_balanced",
+            }
+            plan["execution_metrics"] = {
+                "ratio_delta": ratio_delta,
+                "selected_llm_chunks": selected_llm,
+                "selected_scraper_chunks": selected_scraper,
+            }
             
             # Emit chunks scored event (if scoring happened)
             if event_bus and scored != all_chunks:
@@ -524,7 +567,8 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
                         {
                             "scored_chunks": scored_summary,
                             "total_scored": len(scored),
-                            "threshold": threshold
+                            "threshold": threshold,
+                            "ratio_delta": ratio_delta,
                         }
                     ))
                 except Exception as e:
@@ -558,7 +602,8 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
                             "filtered_chunks": filtered_summary,
                             "kept": len(scored),
                             "total": len(chunks),
-                            "dropped": len(chunks) - len(scored)
+                            "dropped": len(chunks) - len(scored),
+                            "ratio_delta": ratio_delta,
                         }
                     ))
                 except Exception as e:
@@ -570,7 +615,11 @@ async def run(query: str, pool: KeyPool, registry: ScraperRegistry, query_id: st
                     await event_bus.publish(PipelineEvent(
                         EventType.TRIAGE_DONE,
                         query_id,
-                        {"chunks_remaining": len(scored), "chunks_dropped": len(chunks) - len(scored)}
+                        {
+                            "chunks_remaining": len(scored),
+                            "chunks_dropped": len(chunks) - len(scored),
+                            "ratio_delta": ratio_delta,
+                        }
                     ))
                 except Exception as e:
                     logger.debug(f"Could not emit TRIAGE_DONE: {e}")

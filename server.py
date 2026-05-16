@@ -48,6 +48,27 @@ MAX_QUERY_LENGTH = 2000
 MAX_RECENT_QUERIES = 100
 
 
+def _normalize_ratio(llm_ratio: int, scraper_ratio: int) -> dict:
+    """Normalize user-provided ratio values into canonical percentage form."""
+    if llm_ratio < 0 or scraper_ratio < 0:
+        raise ValueError("Ratio values must be non-negative")
+
+    total = llm_ratio + scraper_ratio
+    if total <= 0:
+        raise ValueError("Ratio values must sum to a positive number")
+
+    normalized_llm = round((llm_ratio / total) * 100)
+    normalized_scraper = 100 - normalized_llm
+
+    return {
+        "llm_ratio": normalized_llm,
+        "scraper_ratio": normalized_scraper,
+        "requested_llm_ratio": llm_ratio,
+        "requested_scraper_ratio": scraper_ratio,
+        "ratio_total": total,
+    }
+
+
 def _safe_json_load(value: Optional[str], fallback):
     if not value:
         return fallback
@@ -160,6 +181,8 @@ class QueryRequest(BaseModel):
     """Submit a research query."""
     query: str = Field(..., min_length=1, max_length=MAX_QUERY_LENGTH)
     focus_area: Optional[str] = Field(None, max_length=200)
+    llm_ratio: int = Field(70, ge=0, le=100)
+    scraper_ratio: int = Field(30, ge=0, le=100)
 
 
 class HealthResponse(BaseModel):
@@ -272,6 +295,8 @@ async def submit_query(req: QueryRequest, background_tasks: BackgroundTasks):
         if not query_text:
             raise ValueError("Query cannot be empty or whitespace")
 
+        ratio_controls = _normalize_ratio(req.llm_ratio, req.scraper_ratio)
+
         query_id = str(uuid.uuid4())[:8]
 
         async def run_pipeline():
@@ -282,14 +307,28 @@ async def submit_query(req: QueryRequest, background_tasks: BackgroundTasks):
                     PipelineEvent(
                         EventType.QUERY_STARTED,
                         query_id,
-                        {"query": query_text, "focus_area": req.focus_area or ""},
+                        {
+                            "query": query_text,
+                            "focus_area": req.focus_area or "",
+                            "ratio_controls": ratio_controls,
+                        },
                     )
                 )
 
                 logger.info(f"[{query_id}] Running pipeline for: {query_text[:50]}...")
 
                 # Run the pipeline with the same query_id and event_bus for real-time events
-                result = await run(query_text, pool, registry, query_id=query_id, event_bus=event_bus)
+                result = await run(
+                    query_text,
+                    pool,
+                    registry,
+                    query_id=query_id,
+                    event_bus=event_bus,
+                    query_controls={
+                        "focus_area": req.focus_area or "",
+                        "ratio_controls": ratio_controls,
+                    },
+                )
                 
                 # Emit completion event
                 await event_bus.publish(
@@ -304,6 +343,7 @@ async def submit_query(req: QueryRequest, background_tasks: BackgroundTasks):
                             "duration_ms": result.get("duration_ms", 0),
                             "sources": result.get("sources", []),
                             "plan": result.get("plan", {}),
+                            "ratio_controls": ratio_controls,
                         },
                     )
                 )
@@ -798,6 +838,8 @@ async def get_query_execution(query_id: str):
                 "confidence": query_data.get("confidence", 0.0),
                 "duration_ms": query_data.get("duration_ms", 0.0),
                 "plan": _safe_json_load(query_data.get("plan_json"), {}),
+                "controls": _safe_json_load(query_data.get("plan_json"), {}).get("query_controls", {}),
+                "execution_metrics": _safe_json_load(query_data.get("plan_json"), {}).get("execution_metrics", {}),
                 "sources": [
                     chunk.get("url")
                     for chunk in chunk_rows
