@@ -1,5 +1,5 @@
 - [ ] LLM key management in the ui
-- [ ] LLM and scraper usage percentage on the query display
+- [x] LLM and scraper usage percentage on the query display
 - [ ] single query persistence and chat CRUD operation for new chats and all.
 - [ ] pause in the middle of a query (graceful handling)
 - [ ] scrapers as plug and play module
@@ -12,3 +12,4 @@
 - [x] LLM intergration to triage
 - [x] remove the UI prototype files
 - [ ] orchestrator specific instructions
+- [ ] LLm and Scraper bias ration adjustment

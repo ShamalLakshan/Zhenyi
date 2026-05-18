@@ -1,65 +1,53 @@
 @import "tailwindcss";
 
+@theme {
+  --color-background: #09090b;
+  --color-foreground: #f4f4f5;
+  --color-card: #121215;
+  --color-card-foreground: #f4f4f5;
+  --color-popover: #121215;
+  --color-popover-foreground: #f4f4f5;
+  --color-primary: #4f46e5;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #27272a;
+  --color-secondary-foreground: #f4f4f5;
+  --color-muted: #1c1c21;
+  --color-muted-foreground: #71717a;
+  --color-accent: #27272a;
+  --color-accent-foreground: #f4f4f5;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #f4f4f5;
+  --color-border: #27272a;
+  --color-input: #27272a;
+  --color-ring: #6366f1;
+
+  --radius-lg: 1.25rem;
+  --radius-md: 1rem;
+  --radius-sm: 0.75rem;
+}
+
 @layer base {
-  :root {
-    --background: 16 11% 8%;
-    --foreground: 128 5% 90%;
-    --card: 132 10% 9%;
-    --card-foreground: 128 5% 90%;
-    --popover: 132 10% 9%;
-    --popover-foreground: 128 5% 90%;
-    --primary: 128 13% 51%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 130 14% 12%;
-    --secondary-foreground: 24 6% 90%;
-    --muted: 130 14% 12%;
-    --muted-foreground: 128 13% 51%;
-    --accent: 130 14% 12%;
-    --accent-foreground: 24 6% 90%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 128 9% 17%;
-    --input: 128 9% 17%;
-    --ring: 128 13% 51%;
-    --radius: 1rem;
+  * {
+    @apply border-border;
   }
-
-  .dark {
-    --background: 16 11% 8%;
-    --foreground: 128 5% 90%;
-    --card: 132 10% 9%;
-    --card-foreground: 128 5% 90%;
-    --popover: 132 10% 9%;
-    --popover-foreground: 128 5% 90%;
-    --primary: 128 13% 51%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 130 14% 12%;
-    --secondary-foreground: 24 6% 90%;
-    --muted: 130 14% 12%;
-    --muted-foreground: 128 13% 51%;
-    --accent: 130 14% 12%;
-    --accent-foreground: 24 6% 90%;
-    --border: 128 9% 17%;
-    --input: 128 9% 17%;
-    --ring: 128 13% 51%;
-  }
-
   body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
-    font-family: "Inter", "Geist", sans-serif;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+    overflow: hidden;
   }
 }
 
-@layer components {
-  .glass {
-    @apply bg-black/30 backdrop-blur-md border border-white/10;
-  }
+.prose {
+  max-width: 65ch;
+  color: var(--color-foreground);
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+/* Glassmorphism utility */
+.backdrop-blur-xl {
+  backdrop-filter: blur(24px);
+}
+
+.grid-background {
+  background-image: radial-gradient(#ffffff0a 1px, transparent 1px);
+  background-size: 24px 24px;
 }

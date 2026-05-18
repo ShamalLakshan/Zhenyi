@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, CSSProperties } from "react";
 import { Header } from "./components/Header";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { QueryInput } from "./components/QueryInput";
@@ -6,38 +6,30 @@ import { PipelineFlow } from "./components/PipelineFlow";
 import { ResultPanel } from "./components/ResultPanel";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { ChunkViewer } from "./components/ChunkViewer";
+import { StageDetailPanel } from "./components/StageDetailPanel";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Toaster } from "./components/ui/sonner";
 import { toast } from "sonner";
-import api, { QueryHistoryItem, QueryResult } from "./lib/api";
-
-type Status = 'ready' | 'submitting' | 'running' | 'done' | 'error' | 'cancelled';
-
-interface PipelineNode {
-  id: string;
-  label: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  subtitle?: string;
-  title?: string;
-}
-
-interface PipelineEdge {
-  from: string;
-  to: string;
-}
+import api, { ExecutionStageDetail, QueryExecution, QueryHistoryItem, QueryResult } from "./lib/api";
+import { Status, Node, Edge, Chunk } from "./lib/types";
+import { Loader2, History, Zap } from "lucide-react";
 
 export default function App() {
   const [status, setStatus] = useState<Status>('ready');
   const [currentQuery, setCurrentQuery] = useState("");
-  const [currentQueryId, setCurrentQueryId] = useState<string | null>(null);
+  const [queryId, setQueryId] = useState<string | null>(null);
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
-  const [nodes, setNodes] = useState<PipelineNode[]>([]);
-  const [edges, setEdges] = useState<PipelineEdge[]>([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
   const [pipelineData, setPipelineData] = useState<any>({});
+  const [execution, setExecution] = useState<QueryExecution | null>(null);
+  const [stageDetails, setStageDetails] = useState<Record<string, ExecutionStageDetail>>({});
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  const [uiScale, setUiScale] = useState(0.94);
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [selectedChunk, setSelectedChunk] = useState<any>(null);
+  const [selectedChunk, setSelectedChunk] = useState<Chunk | null>(null);
   
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -58,11 +50,49 @@ export default function App() {
     loadHistory();
   }, [loadHistory]);
 
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
+
+  const loadExecution = useCallback(async (id: string) => {
+    try {
+      const res = await api.getExecution(id);
+      const exec = res.data;
+      setExecution(exec);
+      setStageDetails(exec.stages?.details || {});
+
+      const graphNodes: Node[] = (exec.graph?.nodes || []).map((node: any) => ({
+        id: node.id,
+        label: node.label,
+        status: 'done',
+        title: node.model ? `${node.provider || ''} ${node.model}`.trim() : node.type,
+      }));
+      setNodes(graphNodes);
+      setEdges(exec.graph?.edges || []);
+    } catch (error) {
+      setExecution(null);
+    }
+  }, []);
+
   // Handle Pipeline Events
   const handlePipelineEvent = useCallback((event: any) => {
-    if (event.type === 'ping' || !event.event_type) return;
+    if (!event.event_type) return;
 
     const { event_type, data } = event;
+
+    if (data?.stage_id && data?.stage_details) {
+      setStageDetails((prev) => ({
+        ...prev,
+        [data.stage_id]: {
+          ...(prev[data.stage_id] || {}),
+          ...data.stage_details,
+        },
+      }));
+    }
     
     setPipelineData((prev: any) => ({
       ...prev,
@@ -70,16 +100,22 @@ export default function App() {
     }));
 
     setNodes((prevNodes) => {
-      const nodeMap = Object.fromEntries(prevNodes.map(n => [n.id, n]));
-      const newEdges = [...edges];
+      const nodeMap = Object.fromEntries(prevNodes.map(n => [n.id, { ...n }]));
 
       switch(event_type) {
         case 'QUERY_STARTED':
+          setSelectedStageId(null);
+          setEdges([
+            { from: 'orchestrator', to: 'triage' },
+            { from: 'triage', to: 'analysts' },
+            { from: 'analysts', to: 'synthesizer' },
+            { from: 'synthesizer', to: 'output' },
+          ]);
           return [
             { id: 'orchestrator', label: 'Orchestrator', status: 'running', title: data.query },
             { id: 'triage', label: 'Triage', status: 'pending', subtitle: 'Scoring & Filtering' },
-            { id: 'analysts', label: 'Analysis', status: 'pending', subtitle: 'Contextual Slicing' },
-            { id: 'synthesizer', label: 'Synthesis', status: 'pending', subtitle: 'Intelligence Assembly' },
+            { id: 'analysts', label: 'Analysis', status: 'pending', subtitle: 'Intelligence Slicing' },
+            { id: 'synthesizer', label: 'Synthesis', status: 'pending', subtitle: 'Final Assembly' },
             { id: 'output', label: 'Output', status: 'pending' }
           ];
         
@@ -94,7 +130,16 @@ export default function App() {
               const scraperId = `scraper-${(chunk.source || 'unknown').toLowerCase()}`;
               if (!nodeMap[scraperId]) {
                  nodeMap[scraperId] = { id: scraperId, label: chunk.source, status: 'done', title: 'Data Ingested' };
-                 // Normally we'd add edges here too
+                 setEdges((prev) => {
+                  const next = [...prev, { from: 'orchestrator', to: scraperId }, { from: scraperId, to: 'triage' }];
+                  const seen = new Set<string>();
+                  return next.filter((edge) => {
+                    const key = `${edge.from}-${edge.to}`;
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                  });
+                 });
               }
             });
           }
@@ -127,45 +172,55 @@ export default function App() {
 
         case 'QUERY_DONE':
           if (nodeMap['output']) nodeMap['output'].status = 'done';
-          setQueryResult({
-            query_id: event.query_id,
-            answer: data.answer,
-            confidence: data.confidence,
-            profile: data.profile,
-            duration_ms: data.duration_ms
-          });
+          setQueryResult(data);
+          if (data.query_id) {
+            loadExecution(data.query_id);
+          }
           setStatus('done');
           loadHistory();
-          toast.success("Intelligence report synthesized successfully.");
+          toast.success("Synthesis complete.");
           break;
 
         case 'QUERY_ERROR':
           if (nodeMap['output']) nodeMap['output'].status = 'error';
           setStatus('error');
-          toast.error("Research agent encountered an error: " + data.error);
+          toast.error(data.error || "Synthesis interrupted.");
           break;
       }
       return Object.values(nodeMap);
     });
-  }, [edges, loadHistory]);
+  }, [loadExecution, loadHistory]);
 
   // Handle Query Submission
-  const handleSubmitQuery = async (query: string, focusArea?: string) => {
+  const handleSubmitQuery = async (
+    query: string,
+    focusArea?: string,
+    llmRatio = 70,
+    scraperRatio = 30,
+  ) => {
     try {
       setStatus('submitting');
       setQueryResult(null);
       setPipelineData({});
+      setExecution(null);
+      setStageDetails({});
+      setSelectedStageId(null);
       setNodes([]);
+      setEdges([]);
       setSelectedChunk(null);
       setCurrentQuery(query);
       
-      const res = await api.submitQuery(query, focusArea);
-      const queryId = res.data.query_id;
-      
-      setCurrentQueryId(queryId);
+      const res = await api.submitQuery({
+        query,
+        focusArea,
+        llmRatio,
+        scraperRatio,
+      });
+      const newQueryId = res.data.query_id;
+      setQueryId(newQueryId);
       setStatus('running');
 
-      const ws = api.connectQueryStream(queryId);
+      const ws = api.connectQueryStream(newQueryId);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
@@ -177,8 +232,8 @@ export default function App() {
       };
 
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Submission failure");
-      setStatus('error');
+      toast.error(err.response?.data?.detail || "Connection failure");
+      setStatus('ready');
     }
   };
 
@@ -186,15 +241,16 @@ export default function App() {
     try {
       const res = await api.getQuery(id);
       setQueryResult(res.data);
-      setCurrentQuery(res.data.answer); // Or find the query text in history
+      setQueryId(id);
+      loadExecution(id);
+      setSelectedStageId(null);
       const historyItem = history.find(h => h.query_id === id);
       if (historyItem) setCurrentQuery(historyItem.query_text);
       
       setStatus('done');
       setIsHistoryOpen(false);
-      setNodes([]); // Clear graph for historical view unless we fetch logs
     } catch (err) {
-      toast.error("Failed to load historical data");
+      toast.error("Cloud synchronization error");
     }
   };
 
@@ -202,91 +258,145 @@ export default function App() {
     try {
       await api.deleteQuery(id);
       setHistory(prev => prev.filter(h => h.query_id !== id));
-      toast.success("Historical record purged.");
+      toast.success("Archive purged.");
     } catch (err) {
-      toast.error("Failed to delete record.");
+      toast.error("Cleanup failed.");
     }
   };
 
-  const allChunks = [
-    ...(pipelineData.CHUNKS_COLLECTED?.raw_chunks_full || pipelineData.CHUNKS_COLLECTED?.chunks || []),
-    ...(pipelineData.CHUNKS_FILTERED?.filtered_chunks || []),
-    ...(pipelineData.CHUNKS_SCORED?.scored_chunks || []),
+  const rawChunks: Chunk[] = pipelineData.CHUNKS_COLLECTED?.raw_chunks_full || pipelineData.CHUNKS_COLLECTED?.chunks || [];
+  const scoredChunks: Chunk[] = (pipelineData.CHUNKS_SCORED?.scored_chunks_full || pipelineData.CHUNKS_SCORED?.scored_chunks || execution?.chunks?.scored || []).map((c: any) => ({ ...c, stage: 'scored' }));
+  const filteredChunks: Chunk[] = (
+    pipelineData.CHUNKS_FILTERED?.filtered_chunks_full || pipelineData.CHUNKS_FILTERED?.filtered_chunks || execution?.chunks?.filtered || []
+  ).map((c: any) => ({
+    ...c,
+    text: c.text || c.content,
+    score: c.score ?? c.relevance_score,
+    stage: 'filtered',
+  }));
+
+  const allChunks: Chunk[] = [
+    ...rawChunks.map((c: any) => ({ ...c, stage: 'raw' })),
+    ...scoredChunks,
+    ...filteredChunks,
   ].filter((v, i, a) => {
-    const uniqueKey = v.text || v.content || `${v.source}-${v.index}`;
-    return a.findIndex(t => (t.text || t.content || `${t.source}-${t.index}`) === uniqueKey) === i;
+    const key = v.text || v.content || v.title;
+    return a.findIndex(t => (t.text || t.content || t.title) === key) === i;
   });
+
+  const activeStageDetail = selectedStageId
+    ? stageDetails[selectedStageId] || execution?.stages?.details?.[selectedStageId] || null
+    : null;
+
+  const scaledStyle: CSSProperties = {
+    zoom: uiScale,
+  };
 
   return (
     <ThemeProvider defaultTheme="dark">
       <TooltipProvider>
-        <div className="min-h-screen bg-background text-foreground transition-colors duration-300 flex flex-col">
-          <Header status={status} onToggleHistory={() => setIsHistoryOpen(true)} />
+        <div className="h-screen bg-background text-zinc-100 flex flex-col selection:bg-primary/30 overflow-hidden">
+          <Header
+            status={status}
+            onToggleHistory={() => setIsHistoryOpen(true)}
+            selectedStageId={selectedStageId}
+            uiScale={uiScale}
+            onUiScaleChange={setUiScale}
+          />
           
-          <main className="flex-1 flex overflow-hidden gap-0">
+          <main className="flex-1 grid grid-cols-[64px_1fr_360px] gap-3 p-3 overflow-hidden" style={scaledStyle}>
             
-            {/* Left Panel: Request/Response (flex-grow, independently scrollable) */}
-            <div className="flex-1 min-w-0 border-r border-white/5 overflow-hidden flex flex-col">
+            {/* Sidebar Palette */}
+            <aside className="bg-card border border-border rounded-2xl flex flex-col items-center py-6 gap-6 shadow-2xl">
+              <div 
+                className="w-10 h-10 rounded-xl bg-zinc-800 text-zinc-400 flex items-center justify-center cursor-pointer hover:text-white transition-colors"
+                onClick={() => setIsHistoryOpen(true)}
+              >
+                <History className="w-5 h-5" />
+              </div>
+              <div className="w-10 h-10 rounded-xl bg-primary/20 text-primary flex items-center justify-center cursor-pointer">
+                <Zap className="w-5 h-5" />
+              </div>
+              <div className="w-10 h-10 rounded-xl bg-zinc-800 text-zinc-400 flex items-center justify-center cursor-pointer hover:text-white transition-colors">
+                 <Loader2 className={`w-5 h-5 ${status === 'running' ? 'animate-spin' : ''}`} />
+              </div>
+              <div className="mt-auto w-10 h-10 rounded-full bg-linear-to-br from-indigo-500 to-primary border border-white/10 shadow-lg" />
+            </aside>
+
+            {/* Main Stage (Graph/Result Area) */}
+            <div className="flex-1 min-w-0 flex flex-col relative bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+              <div className="absolute inset-0 grid-background pointer-events-none" />
               {status === 'ready' || status === 'submitting' ? (
                 <QueryInput onSubmit={handleSubmitQuery} isLoading={status === 'submitting'} />
               ) : queryResult ? (
-                <div className="flex-1 overflow-y-auto">
-                  <ResultPanel 
-                    answer={queryResult.answer} 
-                    confidence={queryResult.confidence}
-                    profile={queryResult.profile}
-                    duration={queryResult.duration_ms}
-                    query={currentQuery}
-                  />
-                </div>
-              ) : status === 'running' ? (
-                <div className="flex-1 overflow-y-auto flex flex-col">
-                  <div className="flex-1 flex flex-col items-center justify-center p-8">
+                <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-3 p-3 relative z-10">
+                  <div className="min-h-0 overflow-hidden border border-border rounded-xl bg-zinc-950/10">
+                    <ResultPanel 
+                      answer={queryResult.answer} 
+                      confidence={queryResult.confidence}
+                      profile={queryResult.profile}
+                      duration={queryResult.duration_ms}
+                      query={currentQuery}
+                      stageBreakdown={execution?.stages?.breakdown}
+                      providerUsage={execution?.usage?.providers}
+                      scraperUsage={execution?.usage?.scrapers}
+                      sources={queryResult.sources || execution?.summary?.sources || []}
+                      ratioControls={execution?.summary?.controls as any}
+                      ratioMetrics={execution?.summary?.execution_metrics?.ratio_delta as any}
+                    />
+                  </div>
+                  <div className="min-h-0 overflow-hidden border border-border rounded-xl bg-zinc-950/10 p-4">
                     <PipelineFlow 
                       nodes={nodes}
                       edges={edges}
-                      onNodeClick={(nodeId) => console.log('Clicked node:', nodeId)}
+                      onNodeClick={(id) => setSelectedStageId(id)}
                     />
                   </div>
-                  {allChunks.length > 0 && (
-                    <div className="border-t border-white/5 p-4 bg-background/50">
-                      <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                        Intelligence Gathered: {allChunks.length} Units
-                      </div>
-                      <div className="flex gap-2 flex-wrap">
-                        {allChunks.slice(0, 3).map((chunk, i) => (
-                          <div key={i} className="text-[10px] bg-primary/10 text-primary px-2 py-1 rounded-lg truncate max-w-xs border border-primary/20">
-                            {chunk.source} · {chunk.title || `Unit #${chunk.index}`}
-                          </div>
-                        ))}
-                        {allChunks.length > 3 && (
-                          <div className="text-[10px] text-muted-foreground px-2 py-1">+{allChunks.length - 3} more</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-8 text-center">
-                  <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mb-6">
-                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                <div className="flex-1 overflow-hidden flex flex-col p-8 relative z-10">
+                   <PipelineFlow 
+                     nodes={nodes}
+                     edges={edges}
+                     onNodeClick={(id) => setSelectedStageId(id)}
+                   />
+                </div>
+              )}
+
+              {selectedStageId && (
+                <StageDetailPanel
+                  stageId={selectedStageId}
+                  detail={activeStageDetail}
+                  onClose={() => setSelectedStageId(null)}
+                  onSelectChunk={(chunk) => setSelectedChunk(chunk)}
+                />
+              )}
+
+              {/* Status Bar */}
+              {status === 'running' && (
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-zinc-900/90 border border-border px-6 py-3 rounded-full backdrop-blur-md shadow-2xl flex items-center gap-4">
+                  <div className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
                   </div>
-                  <h2 className="text-xl font-bold mb-2">Processing Query</h2>
-                  <p className="text-sm text-muted-foreground max-w-sm">
-                    Agent is currently gathering intelligence nodes and synthesizing a final research report.
-                  </p>
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Intelligence Stream Active</span>
                 </div>
               )}
             </div>
 
-            {/* Right Panel: Citations/Chunks (independently scrollable, always visible on md+) */}
-            <div className="w-72 flex-shrink-0 overflow-hidden border-l border-white/5 hidden md:flex flex-col">
+            {/* Right Interface Panel */}
+            <aside className="bg-card border border-border rounded-2xl flex flex-col overflow-hidden shadow-2xl">
               <ChunkViewer 
                 chunks={allChunks}
+                groupedChunks={{
+                  raw: rawChunks,
+                  scored: scoredChunks,
+                  filtered: filteredChunks,
+                }}
                 selectedChunk={selectedChunk}
                 onSelect={setSelectedChunk}
               />
-            </div>
+            </aside>
           </main>
 
           <HistorySidebar 
@@ -302,24 +412,5 @@ export default function App() {
         </div>
       </TooltipProvider>
     </ThemeProvider>
-  );
-}
-
-function Loader2(props: any) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
   );
 }

@@ -14,7 +14,6 @@ Error handling:
 The fallback plan is always valid and runnable without any LLM call.
 """
 
-import asyncio
 import json
 import logging
 import re
@@ -30,46 +29,6 @@ from core.exceptions import NoAvailableKeysError
 logger = logging.getLogger(__name__)
 
 AVAILABLE_SCRAPERS = ["hackernews", "web", "arxiv", "wikipedia", "ddgs", "openalex", "open_meteo", "sec_edgar", "youtube"]
-
-# Query intent detection keywords for smart scraper selection
-QUERY_INTENT_KEYWORDS = {
-    "academic": {
-        "keywords": ["paper", "research", "study", "journal", "arxiv", "doi", "citation", "peer review", "methodology"],
-        "scrapers": ["arxiv", "openalex", "web"],
-    },
-    "current_events": {
-        "keywords": ["latest", "recent", "news", "today", "breaking", "update", "2024", "2025", "2026", "announce", "release"],
-        "scrapers": ["hackernews", "web", "ddgs"],
-    },
-    "knowledge_base": {
-        "keywords": ["what is", "definition", "explain", "how does", "background", "history", "overview", "introduction"],
-        "scrapers": ["wikipedia", "web"],
-    },
-    "weather_climate": {
-        "keywords": ["weather", "temperature", "forecast", "climate", "wind", "rain", "celsius", "fahrenheit"],
-        "scrapers": ["open_meteo", "web"],
-    },
-    "finance_sec": {
-        "keywords": ["sec filing", "10-k", "10-q", "stock", "earnings", "financial", "sec.gov", "cik", "ticker"],
-        "scrapers": ["sec_edgar", "web"],
-    },
-    "video_multimedia": {
-        "keywords": ["video", "youtube", "tutorial", "demo", "stream", "channel", "playlist", "watch"],
-        "scrapers": ["youtube", "web"],
-    },
-    "tech_trends": {
-        "keywords": ["algorithm", "github", "code", "library", "framework", "open source", "repository", "commit"],
-        "scrapers": ["hackernews", "web", "ddgs"],
-    },
-    "community_opinion": {
-        "keywords": ["forum", "community", "people", "opinion", "experience", "recommend", "review", "discussion"],
-        "scrapers": ["hackernews", "web"],
-    },
-    "specification_technical": {
-        "keywords": ["spec", "datasheet", "part", "model", "schematic", "component", "manual", "guide", "documentation", "tutorial"],
-        "scrapers": ["web", "arxiv"],
-    },
-}
 
 
 def _extract_retry_delay(error: Exception) -> float:
@@ -97,7 +56,14 @@ class OrchestratorAgent:
     def __init__(self, pool: KeyPool):
         self.pool = pool
 
-    async def plan(self, query: str, query_id: str, log_ctx=None) -> dict:
+    def _get_enabled_scrapers(self) -> list[str]:
+        scrapers_cfg = self.pool.config.get("scrapers", {}) if self.pool else {}
+        enabled = [name for name, cfg in scrapers_cfg.items() if cfg.get("enabled", True)]
+        if enabled:
+            return enabled
+        return list(scrapers_cfg.keys())
+
+    async def plan(self, query: str, query_id: str, log_ctx=None, query_controls: Optional[dict] = None) -> dict:
         """
         Produce a full execution plan for this query.
         Returns a dict with: profile, scrapers, analyst_count, roles, reasoning.
@@ -147,7 +113,7 @@ class OrchestratorAgent:
             
             return plan
 
-        prompt = self._build_prompt(query, snapshot)
+        prompt = self._build_prompt(query, snapshot, query_controls=query_controls or {})
 
         # Try primary key first, then fallback keys on rate limit
         tried_keys = [key_state]
@@ -225,6 +191,40 @@ class OrchestratorAgent:
         plan = self._parse_plan(raw, snapshot)
         plan = self._validate_and_fix_plan(plan, snapshot)
 
+        if query_controls:
+            ratio_controls = query_controls.get("ratio_controls", {})
+            llm_ratio = int(ratio_controls.get("llm_ratio", 50))
+            scraper_ratio = int(ratio_controls.get("scraper_ratio", 50))
+            plan["query_controls"] = query_controls
+            plan["ratio_controls"] = ratio_controls
+
+            if llm_ratio >= 65:
+                plan["triage_mode"] = "llm_only"
+            elif scraper_ratio >= 65:
+                plan["triage_mode"] = "scraper_only"
+            else:
+                plan["triage_mode"] = "hybrid"
+
+            desired_analysts = max(1, min(4, round(llm_ratio / 25) or 1))
+            plan["analyst_count"] = max(plan.get("analyst_count", 1), desired_analysts)
+            roles = plan.setdefault("roles", {})
+            analysis_provider = self._pick_by_strength(snapshot, ["reasoning", "analysis", "general"]) or next(iter(snapshot))
+            for idx in range(plan["analyst_count"]):
+                role_name = f"analyst_{idx}"
+                if role_name not in roles:
+                    roles[role_name] = {
+                        "provider": analysis_provider,
+                        "model": self._default_model(snapshot, analysis_provider),
+                    }
+
+            if "triage" in roles:
+                roles["triage"] = roles["triage"]
+            else:
+                roles["triage"] = {
+                    "provider": self._pick_by_strength(snapshot, ["speed", "general"]) or next(iter(snapshot)),
+                    "model": self._default_model(snapshot, self._pick_by_strength(snapshot, ["speed", "general"]) or next(iter(snapshot))),
+                }
+
         await state_store.log_thought(
             query_id, "orchestrator_plan",
             f"profile={plan['profile']} scrapers={plan['scrapers']} "
@@ -246,10 +246,11 @@ class OrchestratorAgent:
         
         return plan
 
-    def _build_prompt(self, query: str, snapshot: dict) -> str:
-        # Detect query intent for smart scraper suggestions
-        intent = self._detect_query_intent(query)
-        suggested_scrapers = QUERY_INTENT_KEYWORDS.get(intent, {}).get("scrapers", ["hackernews", "web"])
+    def _build_prompt(self, query: str, snapshot: dict, query_controls: Optional[dict] = None) -> str:
+        enabled_scrapers = self._get_enabled_scrapers()
+        ratio_controls = (query_controls or {}).get("ratio_controls", {})
+        llm_ratio = ratio_controls.get("llm_ratio", 50)
+        scraper_ratio = ratio_controls.get("scraper_ratio", 50)
         
         return f"""You are the orchestrator of a research agent system.
 Analyse the user query and produce a JSON execution plan.
@@ -260,26 +261,19 @@ USER QUERY:
 AVAILABLE PROVIDERS (live state — only use providers listed here):
 {json.dumps(snapshot, indent=2)}
 
-AVAILABLE SCRAPERS: {AVAILABLE_SCRAPERS}
+ENABLED SCRAPERS (only choose from this list): {enabled_scrapers}
 
-SUGGESTED SCRAPERS FOR THIS QUERY: {suggested_scrapers}
+USER RATIO TARGET (LLM:scraper): {llm_ratio}:{scraper_ratio}
 
 PLANNING RULES:
-Profile selection and scraper requirements:
-  simple_factual  → for definitional/factual queries. scrapers: [] (direct LLM analysis only)
-  current_factual → for recent news/status. scrapers: MUST select 1-2 from suggested
-  research        → for multi-source queries. scrapers: MUST select 2-3 from suggested
-  deep_research   → for complex/philosophical/technical. scrapers: MUST select ALL suggested scrapers
+Profile selection and scraper requirements are now soft guidance, not hardcoded restrictions.
+Choose scrapers based on query semantics, the enabled scraper list, and the requested LLM:scraper ratio.
+Do not default to any single source unless the query explicitly requires it.
 
-CRITICAL: The scraper count MUST match the profile:
-- If you choose "deep_research", you MUST include all suggested scrapers
-- If you choose "research", you MUST include 2-3 suggested scrapers
-- If you choose "current_factual", you MUST include 1-2 suggested scrapers
-- Only choose "simple_factual" if the query is asking for pure definitions/facts with NO external research needed
-
-For philosophical/ethical/hypothetical queries → use "deep_research" with suggested scrapers (for context/precedent research)
-For current events/news → use "current_factual" with news scrapers
-For general research → use "research" with multiple sources
+Ratio guidance:
+- Higher LLM ratio means use more analyst calls and fewer scraper sources.
+- Higher scraper ratio means use broader scraper coverage and fewer LLM-generated perspectives.
+- If data scarcity prevents the exact target mix, preserve answer quality and explain the deviation.
 
 Role assignment:
   triage      → fastest provider (high daily_remaining + speed strength)
@@ -296,11 +290,9 @@ CONSTRAINTS:
 - model string must be from that provider's "models" dict in snapshot
 - Include analyst_1 only if analyst_count >= 2, analyst_2 if >= 3, etc.
 - SCRAPER COUNT VALIDATION:
-  * If profile=simple_factual: scrapers must be empty []
-  * If profile=current_factual: scrapers must have 1-2 items from suggested list
-  * If profile=research: scrapers must have 2-3 items from suggested list  
-  * If profile=deep_research: scrapers must include ALL suggested scrapers
-- DO NOT override profile requirements based on reasoning. Profile MUST determine scraper count.
+    * Keep scraper selection diverse when ratio is scraper-heavy.
+    * Keep scraper selection narrow when ratio is LLM-heavy.
+    * If a scraper is disabled or unavailable, do not include it.
 
 Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
 {{
@@ -350,11 +342,16 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
             return self._fallback_plan()
 
         plan.setdefault("profile", "research")
-        plan.setdefault("scrapers", ["hackernews"])
+        plan.setdefault("scrapers", self._get_enabled_scrapers())
         plan.setdefault("analyst_count", 1)
         plan.setdefault("triage_mode", "hybrid")  # Default to hybrid mode
         plan.setdefault("roles", {})
         plan.setdefault("reasoning", "")
+
+        enabled_scrapers = set(self._get_enabled_scrapers())
+        plan["scrapers"] = [scraper for scraper in plan.get("scrapers", []) if scraper in enabled_scrapers]
+        if not plan["scrapers"]:
+            plan["scrapers"] = list(enabled_scrapers)
 
         # Validate triage_mode
         valid_modes = {"scraper_only", "llm_only", "hybrid"}
@@ -428,60 +425,12 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
         return models.get("default") or (list(models.values())[0] if models else "")
 
     def _detect_query_intent(self, query: str) -> str:
-        """
-        Analyze query to detect intent category.
-        Returns the intent name or "general" as fallback.
-        
-        Match specificity: More specific intents checked first (weather, finance)
-        before generic ones (knowledge_base).
-        """
-        q = query.lower()
-        
-        # Check specific intents first (avoid false matches with generic intents)
-        for intent in ["weather_climate", "finance_sec", "video_multimedia", "academic"]:
-            config = QUERY_INTENT_KEYWORDS.get(intent, {})
-            keywords = config.get("keywords", [])
-            if any(kw in q for kw in keywords):
-                logger.debug(f"[orchestrator] Detected intent: {intent}")
-                return intent
-        
-        # Then check generic intents
-        for intent in ["current_events", "knowledge_base", "tech_trends", "community_opinion", "specification_technical"]:
-            config = QUERY_INTENT_KEYWORDS.get(intent, {})
-            keywords = config.get("keywords", [])
-            if any(kw in q for kw in keywords):
-                logger.debug(f"[orchestrator] Detected intent: {intent}")
-                return intent
-        
         return "general"
 
     def _select_scrapers(self, snapshot: Optional[dict] = None, query: str = "") -> list[str]:
-        """
-        Smart scraper selection based on query intent and availability.
-        Returns a prioritized list of available scrapers.
-        """
-        intent = self._detect_query_intent(query)
-        
-        # Get priority scrapers for this intent
-        priority_scrapers = QUERY_INTENT_KEYWORDS.get(intent, {}).get("scrapers", ["hackernews", "web"])
-        
-        # Build final list: prioritized scrapers that are available, then any other available
-        selected = []
-        for scraper in priority_scrapers:
-            if scraper in AVAILABLE_SCRAPERS and scraper not in selected:
-                selected.append(scraper)
-        
-        # Backfill with any remaining available scrapers from the actual registry
-        # (we can't check registry here, so use hardcoded fallback)
-        for scraper in AVAILABLE_SCRAPERS:
-            if scraper not in selected and scraper in ["hackernews", "web"]:
-                selected.append(scraper)
-        
-        # Ensure at least one scraper
-        if not selected:
-            selected = ["hackernews"]
-        
-        logger.debug(f"[orchestrator] Query intent='{intent}' → scrapers={selected}")
+        """Return the runtime-enabled scrapers without intent-based bias."""
+        selected = self._get_enabled_scrapers()
+        logger.debug(f"[orchestrator] Enabled scrapers → {selected}")
         return selected
 
     def _fallback_plan(self, snapshot: Optional[dict] = None, query: str = "") -> dict:
@@ -496,7 +445,7 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
         if not providers:
             return {
                 "profile": "research",
-                "scrapers": ["hackernews"],
+                "scrapers": self._get_enabled_scrapers(),
                 "analyst_count": 1,
                 "triage_mode": "scraper_only",  # Fast fallback
                 "roles": {},
@@ -507,8 +456,9 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
         reason = self._pick_by_strength(snapshot, ["reasoning", "analysis"]) or providers[0]
         synth  = self._pick_by_strength(snapshot, ["synthesis", "rag"]) or providers[-1]
 
-        # Smart scraper selection based on query intent
-        scrapers = self._select_scrapers(snapshot, query)
+        scrapers = self._get_enabled_scrapers()
+        if not scrapers:
+            scrapers = []
 
         return {
             "profile": "research",
@@ -529,5 +479,5 @@ Reply with ONLY valid JSON, no markdown, no text outside the JSON object:
                     "model": self._default_model(snapshot, synth),
                 },
             },
-            "reasoning": "Fallback plan — Gemini unavailable, using best available providers.",
+            "reasoning": "Fallback plan — Gemini unavailable, using best available providers and enabled scrapers.",
         }

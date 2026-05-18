@@ -37,6 +37,21 @@ uvicorn server:app --reload --host 0.0.0.0 --port 8000
 
 ![Zhenyi Pipeline Architecture](docs/diagrams/basic-diagram.svg)
 
+## Screenshots
+
+<div align="center">
+<table>
+  <tr>
+    <td><img src="project-assets/screenshots/01.png" alt="Screenshot 1" style="max-width:100%; height:auto; margin:4px;"></td>
+    <td><img src="project-assets/screenshots/2.png" alt="Screenshot 2" style="max-width:100%; height:auto; margin:4px;"></td>
+  </tr>
+  <tr>
+    <td><img src="project-assets/screenshots/3.png" alt="Screenshot 3" style="max-width:100%; height:auto; margin:4px;"></td>
+    <td><img src="project-assets/screenshots/4.png" alt="Screenshot 4" style="max-width:100%; height:auto; margin:4px;"></td>
+  </tr>
+</table>
+</div>
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed pipeline design.
 
 ## Features
