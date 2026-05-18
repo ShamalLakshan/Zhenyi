@@ -748,6 +748,8 @@ async def get_query_execution(query_id: str):
             )
             thought_rows = [dict(r) for r in await cursor.fetchall()]
 
+        plan_data = _safe_json_load(query_data.get("plan_json"), {})
+        stage_details = plan_data.get("stage_details", {}) if isinstance(plan_data, dict) else {}
         total_tokens = sum((row.get("actual_tokens_in") or 0) + (row.get("actual_tokens_out") or 0) for row in api_rows)
         provider_usage = defaultdict(lambda: {
             "provider": "",
@@ -830,6 +832,213 @@ async def get_query_execution(query_id: str):
             if persisted_graph.get("edges"):
                 graph["edges"] = persisted_graph["edges"]
 
+        def _build_filtered_chunk(chunk: dict, idx: int) -> dict:
+            source = chunk.get("source", "unknown") or "unknown"
+            is_llm = str(source).lower().startswith("llm_")
+            return {
+                "source": source,
+                "url": chunk.get("url", ""),
+                "content": chunk.get("content", ""),
+                "text": chunk.get("content", ""),
+                "title": f"{source} chunk #{idx + 1}",
+                "score": chunk.get("relevance_score", 0),
+                "relevance_score": chunk.get("relevance_score", 0),
+                "stage": "filtered",
+                "is_llm_generated": is_llm,
+                "source_kind": "llm" if is_llm else "scraper",
+                "policy_block": False,
+                "provenance": {
+                    "source_id": source,
+                    "source_kind": "llm" if is_llm else "scraper",
+                    "provider_name": source.replace("llm_", "") if is_llm else "",
+                    "scraper_name": source if not is_llm else "",
+                    "original_response_path": "",
+                },
+            }
+
+        filtered_chunks = [_build_filtered_chunk(chunk, idx) for idx, chunk in enumerate(chunk_rows)]
+
+        stage_api_calls: dict[str, list[dict]] = {
+            "orchestrator": [],
+            "triage": [],
+            "analysts": [],
+            "synthesizer": [],
+        }
+        for call in api_rows:
+            agent_id = (call.get("agent_id") or "").lower()
+            compact_call = {
+                "agent_id": call.get("agent_id", ""),
+                "provider": call.get("provider", ""),
+                "model": call.get("model", ""),
+                "latency_ms": call.get("latency_ms", 0),
+                "tokens_in": call.get("actual_tokens_in", 0),
+                "tokens_out": call.get("actual_tokens_out", 0),
+                "response_code": call.get("response_code", 0),
+                "created_at": call.get("created_at"),
+                "response_payload_path": call.get("response_payload_path", ""),
+            }
+            if agent_id == "orchestrator":
+                stage_api_calls["orchestrator"].append(compact_call)
+            elif agent_id == "triage":
+                stage_api_calls["triage"].append(compact_call)
+            elif agent_id.startswith("analyst"):
+                stage_api_calls["analysts"].append(compact_call)
+            elif agent_id == "synthesizer":
+                stage_api_calls["synthesizer"].append(compact_call)
+
+        scraper_stage_calls = []
+        scraper_node_details: dict[str, dict] = {}
+        for row in scraper_rows:
+            scraper_name = (row.get("scraper_name") or "unknown").lower()
+            compact_scraper = {
+                "scraper_name": scraper_name,
+                "duration_ms": row.get("duration_ms", 0),
+                "chunks_returned": row.get("chunks_returned", 0),
+                "circuit_breaker_state": row.get("circuit_breaker_state", ""),
+                "error_message": row.get("error_message", ""),
+                "raw_output_path": row.get("raw_output_path", ""),
+                "created_at": row.get("created_at"),
+            }
+            scraper_stage_calls.append(compact_scraper)
+            node_id = f"scraper-{scraper_name}"
+            scraper_node_details[node_id] = {
+                "id": node_id,
+                "name": scraper_name,
+                "status": "done",
+                "latency_ms": row.get("duration_ms", 0),
+                "metrics": {
+                    "chunks_returned": row.get("chunks_returned", 0),
+                    "duration_ms": row.get("duration_ms", 0),
+                    "circuit_breaker_state": row.get("circuit_breaker_state", ""),
+                },
+                "logs": [
+                    f"Scraper {scraper_name} returned {row.get('chunks_returned', 0)} chunks",
+                ],
+                "api_calls": [],
+                "scraper_calls": [compact_scraper],
+                "chunks": {
+                    "raw": [],
+                    "scored": [],
+                    "filtered": [
+                        c for c in filtered_chunks if str(c.get("source", "")).lower() == scraper_name
+                    ],
+                },
+            }
+
+        execution_stage_details = {
+            "orchestrator": {
+                "id": "orchestrator",
+                "name": "Orchestrator",
+                "status": "done",
+                "latency_ms": round(stage_metrics["orchestrator_ms"], 2),
+                "metrics": {
+                    "profile": query_data.get("profile", "research"),
+                    "reasoning_available": bool(orchestrator_plan and orchestrator_plan.get("reasoning")),
+                },
+                "logs": [
+                    (orchestrator_plan or {}).get("reasoning", "Planning complete"),
+                ],
+                "api_calls": stage_api_calls["orchestrator"],
+                "scraper_calls": [],
+                "chunks": {
+                    "raw": stage_details.get("orchestrator", {}).get("chunks", {}).get("raw", []),
+                    "scored": stage_details.get("orchestrator", {}).get("chunks", {}).get("scored", []),
+                    "filtered": stage_details.get("orchestrator", {}).get("chunks", {}).get("filtered", []),
+                },
+            },
+            "scraping": {
+                "id": "scraping",
+                "name": "Scraping",
+                "status": "done",
+                "latency_ms": round(stage_metrics["scraping_ms"], 2),
+                "metrics": {
+                    "scraper_calls": len(scraper_rows),
+                    "raw_chunk_count": sum(row.get("chunks_returned") or 0 for row in scraper_rows),
+                },
+                "logs": [f"Executed {len(scraper_rows)} scraper calls"],
+                "api_calls": [],
+                "scraper_calls": scraper_stage_calls,
+                "chunks": {
+                    "raw": stage_details.get("scraping", {}).get("chunks", {}).get("raw", []),
+                    "scored": stage_details.get("scraping", {}).get("chunks", {}).get("scored", []),
+                    "filtered": stage_details.get("scraping", {}).get("chunks", {}).get("filtered", []),
+                },
+            },
+            "triage": {
+                "id": "triage",
+                "name": "Triage",
+                "status": "done",
+                "latency_ms": round(stage_metrics["triage_ms"], 2),
+                "metrics": {
+                    "filtered_count": len(filtered_chunks),
+                    "ratio_delta": (plan_data.get("execution_metrics", {}) or {}).get("ratio_delta", {}),
+                },
+                "logs": ["Scored and filtered chunks"],
+                "api_calls": stage_api_calls["triage"],
+                "scraper_calls": [],
+                "chunks": {
+                    "raw": stage_details.get("triage", {}).get("chunks", {}).get("raw", []),
+                    "scored": stage_details.get("triage", {}).get("chunks", {}).get("scored", []),
+                    "filtered": filtered_chunks,
+                },
+            },
+            "analysts": {
+                "id": "analysts",
+                "name": "Analysts",
+                "status": "done",
+                "latency_ms": round(stage_metrics["analysis_ms"], 2),
+                "metrics": {
+                    "api_calls": len(stage_api_calls["analysts"]),
+                    "thought_steps": len([t for t in thought_rows if (t.get("step") or "").startswith("anal")]),
+                },
+                "logs": ["Parallel analysis completed"],
+                "api_calls": stage_api_calls["analysts"],
+                "scraper_calls": [],
+                "chunks": {
+                    "raw": stage_details.get("analysts", {}).get("chunks", {}).get("raw", []),
+                    "scored": stage_details.get("analysts", {}).get("chunks", {}).get("scored", []),
+                    "filtered": filtered_chunks,
+                },
+            },
+            "synthesizer": {
+                "id": "synthesizer",
+                "name": "Synthesizer",
+                "status": "done",
+                "latency_ms": round(stage_metrics["synthesis_ms"], 2),
+                "metrics": {
+                    "answer_length": len(query_data.get("answer") or ""),
+                    "confidence": query_data.get("confidence", 0),
+                },
+                "logs": ["Final answer assembled"],
+                "api_calls": stage_api_calls["synthesizer"],
+                "scraper_calls": [],
+                "chunks": {
+                    "raw": stage_details.get("synthesizer", {}).get("chunks", {}).get("raw", []),
+                    "scored": stage_details.get("synthesizer", {}).get("chunks", {}).get("scored", []),
+                    "filtered": filtered_chunks,
+                },
+            },
+            "output": {
+                "id": "output",
+                "name": "Output",
+                "status": "done",
+                "latency_ms": 0,
+                "metrics": {
+                    "source_count": len([chunk.get("url") for chunk in chunk_rows if chunk.get("url")]),
+                    "duration_ms": query_data.get("duration_ms", 0),
+                },
+                "logs": ["Execution response generated"],
+                "api_calls": [],
+                "scraper_calls": [],
+                "chunks": {
+                    "raw": [],
+                    "scored": [],
+                    "filtered": filtered_chunks,
+                },
+            },
+        }
+        execution_stage_details.update(scraper_node_details)
+
         return {
             "query_id": query_id,
             "summary": {
@@ -837,9 +1046,9 @@ async def get_query_execution(query_id: str):
                 "profile": query_data.get("profile", "research"),
                 "confidence": query_data.get("confidence", 0.0),
                 "duration_ms": query_data.get("duration_ms", 0.0),
-                "plan": _safe_json_load(query_data.get("plan_json"), {}),
-                "controls": _safe_json_load(query_data.get("plan_json"), {}).get("query_controls", {}),
-                "execution_metrics": _safe_json_load(query_data.get("plan_json"), {}).get("execution_metrics", {}),
+                "plan": plan_data,
+                "controls": plan_data.get("query_controls", {}),
+                "execution_metrics": plan_data.get("execution_metrics", {}),
                 "sources": [
                     chunk.get("url")
                     for chunk in chunk_rows
@@ -856,18 +1065,12 @@ async def get_query_execution(query_id: str):
                 "breakdown": stage_breakdown,
                 "metrics": stage_metrics,
                 "thought_chain": thought_rows,
+                "details": execution_stage_details,
             },
             "chunks": {
-                "filtered": [
-                    {
-                        "source": chunk.get("source", "unknown"),
-                        "url": chunk.get("url", ""),
-                        "content": chunk.get("content", ""),
-                        "score": chunk.get("relevance_score", 0),
-                        "stage": "filtered",
-                    }
-                    for chunk in chunk_rows
-                ],
+                "raw": stage_details.get("scraping", {}).get("chunks", {}).get("raw", []),
+                "scored": stage_details.get("triage", {}).get("chunks", {}).get("scored", []),
+                "filtered": filtered_chunks,
                 "counts": {
                     "filtered": len(chunk_rows),
                     "raw": sum(row.get("chunks_returned") or 0 for row in scraper_rows),
@@ -878,6 +1081,8 @@ async def get_query_execution(query_id: str):
                 "api_calls": len(api_rows),
                 "scraper_calls": len(scraper_rows),
                 "orchestrator_plan": orchestrator_plan,
+                "api_calls_detail": api_rows,
+                "scraper_calls_detail": scraper_rows,
             },
         }
     except HTTPException:
