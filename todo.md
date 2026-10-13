@@ -1,15 +1,20 @@
-- [ ] LLM key management in the ui
-- [x] LLM and scraper usage percentage on the query display
-- [ ] single query persistence and chat CRUD operation for new chats and all.
-- [ ] pause in the middle of a query (graceful handling)
-- [ ] scrapers as plug and play module
-- [x] logs on the DB??????
-- [x] outpt MD rendering
-- [ ] mermiad / obsidian canvas output
-- [ ] endpoint doc
-- [x] uvicorn server:app --reload --host 0.0.0.0 --port 8000
-- [x] LLM fallback resolution
-- [x] LLM intergration to triage
-- [x] remove the UI prototype files
-- [ ] orchestrator specific instructions
-- [ ] LLm and Scraper bias ration adjustment
+- [x] Environment migration to uv (Linux Python 3.12, pyproject.toml application config, lockfile)
+- [x] Dynamic LLM Key Vault with SQLite persistence (`api_keys` table, masking, health tracking)
+- [x] Rate limiting (RPM & TPM sliding window) & Self-healing circuit breakers
+- [x] Unified Gateway with multi-tier routing (Cerebras, Groq, OpenRouter, GitHub, Gemini, Cohere) & Research Modes
+- [x] REST endpoints for Key Vault CRUD, key testing, health summaries (`/api/keys`)
+- [x] Relational Session database schema (`sessions`, `messages`, `graph_nodes`, `graph_edges`, `research_chunks`)
+- [x] Session & Message CRUD with tree branching & backtracking lineage (`/api/sessions`)
+- [x] Modular scraper plugins architecture (`scrapers/plugins/`: Semantic Scholar, Crossref, PubMed, Reddit, Jina Reader)
+- [x] Full-text cleaner and document ingestion (`core/ingestion/cleaner.py` using trafilatura, pypdf, Jina Reader)
+- [x] Dedicated Knowledge Graph Extraction Agent (`agents/graph_extractor.py`)
+- [x] Local semantic full-text search across session research chunks (`research_chunks_fts` SQLite FTS5)
+- [x] Multi-turn context assembler injecting conversation history & known entities into research prompts
+- [x] UI refactor: Knowledge Graph + Chat hybrid layout with backtracking/branching controls (Anti-AI-slop utilitarian workbench aesthetic)
+- [x] LLM key management in the UI (`KeyManagerModal.tsx`)
+- [x] Mermaid & Obsidian Canvas graph export (`KnowledgeGraphCanvas.tsx`)
+- [x] Purge legacy UI prototype files (`server.ts`, `PipelineFlow.tsx`, `StageDetailPanel.tsx`, etc.)
+- [x] Pause / cancel active query stream with graceful partial synthesis (`/api/sessions/{id}/cancel/{turn_id}`)
+- [x] Contradiction Radar for conflicting claims detection and dispute reconciliation (`/api/sessions/{id}/contradictions`)
+- [x] Multi-format Export Studio: Markdown Research Dossiers, BibTeX Citations, Obsidian Canvas (`/api/sessions/{id}/export/*`)
+- [x] Tree lineage visual breadcrumbs and non-linear turn backtracking in UI

@@ -1,165 +1,142 @@
-<img src="project-assets/banner.png" alt="Zhenyi Banner" width="100%" style="max-width: 900px; height: auto; display: block; margin: 0 auto;">
-
-# Zhenyi - Multi-Agent Research System
-
 <div align="center">
-<img src="project-assets/logo%20(2).png" alt="Zhenyi Logo" width="200" height="200" style="max-width: 100%; height: auto;">
+
+<img src="project-assets/banner.png" alt="Zhenyi Banner" width="100%" style="max-width: 850px; border-radius: 8px;">
+
+<br><br>
+
+<img src="project-assets/logo%20(2).png" alt="Zhenyi Logo" width="160" height="160">
+
+# Zhenyi
+
+### Autonomous Multi-Agent Research Studio and Knowledge Graph
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](server.py)
+[![React + Vite](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB.svg)](web-ui)
+
 </div>
 
-Zhenyi is an open-source multi-agent AI system that conducts autonomous research by orchestrating multiple LLM providers, scraping diverse data sources, and synthesizing coherent answers. Built with **dynamic role assignment**, **intelligent resource scheduling**, and **transparent reasoning chains**.
+**Zhenyi** is an open-source, autonomous multi-agent research system that coordinates multiple free-tier LLM providers, collects empirical evidence across web and academic sources, and synthesizes structured findings into an interactive, real-time knowledge graph.
 
-Named after Wang Zhenyi (1768–1797), a pioneering Chinese mathematician and astronomer who embodied the spirit of rigorous inquiry.
+The project is named in honor of **Wang Zhenyi** (1768–1797), an eighteenth-century mathematician and astronomer noted for rigorous empirical observation and scientific inquiry.
 
-> **⚠️Status**: This is an experimental project in active development. APIs and all the features may change. Use at your own discretion.
+---
 
-## Quick Start
+## Core Capabilities
+
+- **Dynamic Multi-LLM Orchestration**: Dynamically assigns analytical roles (orchestration, triage, multi-perspective analysis, and synthesis) across Google Gemini, Groq, OpenRouter, Cerebras, Cohere, and GitHub Models based on quota availability and domain strengths.
+- **Quota-Aware Architecture**: Operates without commercial API billing requirements by leveraging intelligent provider rotation, cooldown tracking, and deterministic fallback routines.
+- **Multimodal Data Collection**: Integrates 9 built-in scrapers covering HackerNews, arXiv, Wikipedia, DuckDuckGo, YouTube, SEC EDGAR, OpenAlex, and Open-Meteo.
+- **Hierarchical Triage and Resiliency**: Applies heuristic and LLM-based scoring filters to reject low-relevance content, paired with circuit breakers that isolate unstable upstream sources.
+- **Interactive Knowledge Graph**: Provides a configurable force-directed graph canvas that extracts cross-entity relationships in real time alongside a resizable studio interface.
+- **Auditable Lineage**: Preserves full execution traces (`thought_chain`, `agent_outputs`, and citations) in an embedded SQLite database.
+
+---
+
+## Architecture
+
+Zhenyi processes incoming research queries through a sequential five-stage pipeline:
+
+![Zhenyi Pipeline Architecture](diagrams/basic-diagram.svg)
+
+For a comprehensive explanation of pipeline stages, role scheduling, and failure recovery protocols, refer to **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+---
+
+## Quickstart
+
+### 1. Environment Preparation
 
 ```bash
-# 1. Clone and setup
 git clone https://github.com/ShamalLakshan/zhenyi.git
 cd zhenyi
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 2. Install and configure
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your free-tier API keys
-
-# 3. Run
-uvicorn server:app --reload --host 0.0.0.0 --port 8000
-
-# 4. Open browser
-# http://localhost:8000
 ```
 
-## How It Works
+### 2. Configuration
 
-![Zhenyi Pipeline Architecture](docs/diagrams/basic-diagram.svg)
+```bash
+cp .env.example .env
+```
 
-## Screenshots
+Populate `.env` with provider API keys. Google Gemini is recommended as the baseline orchestrator:
+
+```env
+GEMINI_KEY_1=your_gemini_api_key
+GROQ_KEY_1=your_groq_api_key
+OR_KEY_1=your_openrouter_api_key
+```
+
+### 3. Execution
+
+```bash
+uvicorn server:app --reload --host 0.0.0.0 --port 8000
+```
+
+Access the web interface at **[http://localhost:8000](http://localhost:8000)**.
+
+---
+
+## User Interface
 
 <div align="center">
 <table>
   <tr>
-    <td><img src="project-assets/screenshots/01.png" alt="Screenshot 1" style="max-width:100%; height:auto; margin:4px;"></td>
-    <td><img src="project-assets/screenshots/2.png" alt="Screenshot 2" style="max-width:100%; height:auto; margin:4px;"></td>
+    <td><img src="project-assets/screenshots/V2/brave_screenshot_localhost.png" alt="Zhenyi Research Studio and Knowledge Graph" style="max-width:100%; height:auto;"></td>
+    <td><img src="project-assets/screenshots/V2/brave_screenshot_localhost%20(1).png" alt="Multi-Turn Investigation and Claim Inspector" style="max-width:100%; height:auto;"></td>
   </tr>
   <tr>
-    <td><img src="project-assets/screenshots/3.png" alt="Screenshot 3" style="max-width:100%; height:auto; margin:4px;"></td>
-    <td><img src="project-assets/screenshots/4.png" alt="Screenshot 4" style="max-width:100%; height:auto; margin:4px;"></td>
+    <td><img src="project-assets/screenshots/V2/Screenshot_20261013_202304.png" alt="Evidence Lens Full Provenance Inspector" style="max-width:100%; height:auto;"></td>
+    <td><img src="project-assets/screenshots/V2/brave_screenshot_localhost%20(2).png" alt="Dynamic LLM Key Vault and Gateway" style="max-width:100%; height:auto;"></td>
   </tr>
 </table>
 </div>
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed pipeline design.
+---
 
-## Features
+## Supported Providers and Scrapers
 
-- **Multi-LLM Orchestration** - Seamlessly work with 6+ providers (Gemini, Groq, OpenRouter, Cerebras, Cohere, GitHub)
-- **9 Built-in Scrapers** - HackerNews, ArXiv, Wikipedia, SEC Edgar, YouTube, Web Search, and more
-- **Smart Filtering** - Triage removes irrelevant data before analysis
-- **Parallel Processing** - Scrapers and analysts run concurrently for speed
-- **Transparent Chains** - Full audit trail of reasoning for every query
-- **Free-Tier Friendly** - Uses only free APIs; no paid services required
-- **Real-time Updates** - WebSocket events for frontend progress tracking
-- **Production Ready** - SQLite persistence, circuit breaker pattern, error recovery
+### Supported LLM Providers
+
+| Provider | Default Role | Typical Free Tier Allocation |
+|---|---|---|
+| **Google Gemini** | Orchestrator and Deep Analysis | 1,000 requests / day |
+| **Groq** | High-Speed Triage and Filtering | 14,400 requests / day |
+| **OpenRouter** | Multi-Angle Reasoning and Synthesis | ~200 requests / day |
+| **Cerebras** | High-Throughput Inference | 14,400 requests / day |
+| **Cohere** | Synthesis and RAG Summarization | 1,000 requests / day |
+| **GitHub Models** | Fallback Analytical Inference | 150 requests / day |
+
+### Built-in Scrapers
+
+- **hackernews**: Technology discussions and technical commentary
+- **arxiv**: Academic preprints and scientific literature
+- **wikipedia**: Encyclopedic articles and contextual reference
+- **web / ddgs**: Real-time web index queries via DuckDuckGo
+- **youtube**: Video transcripts, descriptions, and metadata
+- **sec_edgar**: Financial filings and corporate disclosures (US)
+- **openalex**: Scientific publication citations and scholarly metadata
+- **open_meteo**: Historical and forecast meteorological records
+
+---
 
 ## Documentation
 
-- **[Setup Guide](docs/SETUP.md)** - Installation and configuration
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and pipeline stages
-- **[API Reference](docs/API.md)** - REST/WebSocket endpoints
-- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing and extending
+Comprehensive project documentation is available in the repository root:
 
-## System Requirements
+- **[Architecture Guide](ARCHITECTURE.md)**: Detailed system design, pipeline life cycle, and component interactions.
+- **[API Reference](API.md)**: Specifications for REST endpoints and WebSocket protocols.
+- **[Contributing Guide](CONTRIBUTING.md)**: Developer setup, scraper and provider authoring, coding standards, and pull request procedures.
+- **[Security Policy](SECURITY.md)**: Credential isolation, threat model, and vulnerability reporting process.
+- **[License](LICENSE)**: Complete terms of the Apache License 2.0.
 
-- Python 3.9+
-- Free API keys (Gemini recommended as starting point)
-- 2+ GB RAM
-- Internet connection (for scrapers)
-
-## Supported LLM Providers
-
-All free-tier with no credit card required:
-
-| Provider | Model | Free Quota |
-|----------|-------|-----------|
-| **Google Gemini** | gemini-2.5-flash | 1,000/day |
-| **Groq** | llama-3.1/3.3 | 14,400/day |
-| **OpenRouter** | meta-llama/llama-3.3-70b | 200/day |
-| **Cerebras** | llama3.1-8b | 14,400/day |
-| **Cohere** | command-a-03-2025 | 1,000/day |
-| **GitHub Models** | gpt-4o-mini | 150/day |
-
-See [docs/SETUP.md](docs/SETUP.md) for getting keys.
-
-## Scrapers
-
-- **hackernews** - Tech news and discussions
-- **arxiv** - Academic papers and research
-- **wikipedia** - General knowledge
-- **web** - DuckDuckGo search results
-- **youtube** - Video descriptions and metadata
-- **sec_edgar** - Financial filings (US only)
-- **openalex** - Academic metadata
-- **open_meteo** - Weather and climate data
-- **ddgs** - Web search alternative
-
-## Example Usage
-
-**Via Web UI**:
-1. Open http://localhost:8000
-2. Enter your query
-3. Watch real-time pipeline progress
-4. Read synthesized answer with citations
-
-**Via API**:
-```bash
-curl -X POST http://localhost:8000/api/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Latest breakthroughs in quantum computing"}'
-
-# Result with query_id
-# Use WebSocket to watch progress: ws://localhost:8000/ws/query/{query_id}
-```
-
-## Architecture Highlights
-
-- **Dynamic Role Assignment** - Orchestrator assigns agents based on query type and provider availability
-- **Circuit Breaker** - Graceful degradation when scrapers/APIs fail
-- **Key Pool Management** - Automatic provider rotation and fallback
-- **Event Bus** - Real-time pipeline events for frontend updates
-- **Structured Persistence** - SQLite with full query history and reasoning traces
-
-## Contributing
-
-Contributions welcome. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for:
-- Adding new scrapers
-- Supporting new LLM providers
-- Extending agent roles
-- Contributing to frontend
-
-Process:
-1. Fork repository
-2. Create feature branch
-3. Make changes with tests
-4. Open pull request
-
-## Status
-
-Active development. Core features stable; APIs subject to change during v0.x phase.
+---
 
 ## License
 
-[License file](LICENSE) - to be determined
-
-## Questions?
-
-- Check [docs/SETUP.md](docs/SETUP.md) for installation issues
-- See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for architecture questions
-- Read [docs/API.md](docs/API.md) for endpoint reference
-
-## Acknowledgments
-
-Named after Wang Zhenyi (1768–1797), whose pioneering work in mathematics and astronomy exemplifies the spirit of intelligent inquiry that guides this project.
+Zhenyi is distributed under the terms of the [Apache License 2.0](LICENSE).

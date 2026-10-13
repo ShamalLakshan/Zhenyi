@@ -252,8 +252,19 @@ class OrchestratorAgent:
         llm_ratio = ratio_controls.get("llm_ratio", 50)
         scraper_ratio = ratio_controls.get("scraper_ratio", 50)
         
+        conv_ctx = (query_controls or {}).get("conversation_context", {})
+        context_block = ""
+        if conv_ctx.get("is_follow_up"):
+            context_block = f"""
+PRIOR CONVERSATION HISTORY (this is a follow-up turn):
+{json.dumps(conv_ctx.get("turns_history", []), indent=2)}
+
+ESTABLISHED KNOWLEDGE GRAPH ENTITIES:
+{json.dumps(conv_ctx.get("established_entities", []), indent=2)}
+"""
+
         return f"""You are the orchestrator of a research agent system.
-Analyse the user query and produce a JSON execution plan.
+Analyse the user query and produce a JSON execution plan.{context_block}
 
 USER QUERY:
 {query}
