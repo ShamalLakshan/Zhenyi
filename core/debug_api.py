@@ -22,6 +22,20 @@ logger = logging.getLogger(__name__)
 DB_PATH = "zhenyi.db"
 
 
+async def _execute_one(self, sql, params=()):
+    cur = await self.execute(sql, params)
+    return await cur.fetchone()
+
+
+async def _execute_all(self, sql, params=()):
+    cur = await self.execute(sql, params)
+    return await cur.fetchall()
+
+
+aiosqlite.Connection.execute_one = _execute_one
+aiosqlite.Connection.execute_all = _execute_all
+
+
 async def get_query_audit(query_id: str, db_path: str = DB_PATH) -> Dict[str, Any]:
     """
     Get complete execution trace for a query.

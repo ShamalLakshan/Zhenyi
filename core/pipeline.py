@@ -967,6 +967,11 @@ async def run(
             # Mark all logs as successfully batch-logged
             await log_ctx.batch_mark_success()
 
+            findings_flat = [
+                f for out in analyst_outputs
+                for f in out.get("key_findings", [])
+            ] if "analyst_outputs" in locals() and analyst_outputs else []
+
             return {
                 "query_id":   query_id,
                 "profile":    profile,
@@ -975,6 +980,8 @@ async def run(
                 "sources":    sources[:10],
                 "plan":       plan,
                 "duration_ms": duration,
+                "chunks":     scored if "scored" in locals() else [],
+                "findings":   findings_flat,
             }
         except Exception as e:
             logger.error(f"[{query_id}] Pipeline error: {e}")

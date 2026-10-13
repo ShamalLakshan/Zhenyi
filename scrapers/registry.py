@@ -24,6 +24,11 @@ from scrapers.openalex_scraper import OpenalexScraper
 from scrapers.open_meteo_scraper import OpenmeteoScraper
 from scrapers.sec_edgar_scraper import SecEdgarScraper
 from scrapers.youtube_scraper import YoutubeScraper
+from scrapers.plugins.semantic_scholar import SemanticScholarScraper
+from scrapers.plugins.crossref import CrossrefScraper
+from scrapers.plugins.pubmed import PubMedScraper
+from scrapers.plugins.reddit import RedditScraper
+from scrapers.plugins.jina_reader import JinaReaderScraper
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +45,20 @@ class ScraperRegistry:
     def _build(self, configs: dict):
         """Instantiate all scrapers. Each one handles its own availability."""
         scraper_classes = {
-            "hackernews": HackerNewsScraper,
-            "web":         WebScraper,
-            "arxiv":       ArxivScraper,
-            "wikipedia":   WikipediaScraper,
-            "ddgs":        DdgsScraper,
-            "openalex":    OpenalexScraper,
-            "open_meteo":  OpenmeteoScraper,
-            "sec_edgar":   SecEdgarScraper,
-            "youtube":     YoutubeScraper,
-            # ── Add new scrapers here ──────────────────────────────────────
-            # "stackoverflow": StackOverflowScraper,
+            "hackernews":       HackerNewsScraper,
+            "web":              WebScraper,
+            "arxiv":            ArxivScraper,
+            "wikipedia":        WikipediaScraper,
+            "ddgs":             DdgsScraper,
+            "openalex":         OpenalexScraper,
+            "open_meteo":       OpenmeteoScraper,
+            "sec_edgar":        SecEdgarScraper,
+            "youtube":          YoutubeScraper,
+            "semantic_scholar": SemanticScholarScraper,
+            "crossref":         CrossrefScraper,
+            "pubmed":           PubMedScraper,
+            "reddit":           RedditScraper,
+            "jina_reader":      JinaReaderScraper,
         }
 
         for name, cls in scraper_classes.items():

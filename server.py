@@ -18,7 +18,7 @@ from typing import Optional
 import aiosqlite
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -29,6 +29,23 @@ from core.state_store import init_db, get_recent_queries, get_thought_chain
 from core.debug_store import init_debug_tables
 from core.db_migration import migrate_to_latest, create_query_execution_table
 from scrapers.registry import ScraperRegistry
+
+# Gateway & Multi-Turn Session imports
+from core.gateway.models import (
+    KeyModel, KeyCreateRequest, KeyUpdateRequest, KeyTestRequest, KeyTestResult,
+    ResearchMode, ProviderSpec, PROVIDER_SPECS
+)
+from core.gateway.gateway import LLMGateway
+from core.gateway.llm_client import UnifiedLLMClient
+from core.session.models import (
+    SessionModel, SessionCreateRequest, SessionUpdateRequest,
+    MessageModel, GraphNodeModel, GraphEdgeModel, SessionGraphModel,
+    ChatTurnRequest
+)
+from core.session.manager import SessionManager
+from core.session.triple_extractor import KnowledgeTripleExtractor
+from core.session.exporter import SessionExporter
+from agents.graph_extractor import GraphExtractorAgent
 
 load_dotenv()
 
@@ -173,6 +190,8 @@ app.add_middleware(
 pool: Optional[KeyPool] = None
 registry: Optional[ScraperRegistry] = None
 event_bus: Optional[EventBus] = None
+gateway: Optional[LLMGateway] = None
+session_manager: Optional[SessionManager] = None
 running_queries: dict[str, asyncio.Task] = {}
 
 
@@ -196,7 +215,7 @@ class HealthResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize database, pools, and event bus."""
-    global pool, registry, event_bus
+    global pool, registry, event_bus, gateway, session_manager
 
     try:
         logger.info("Starting up...")
@@ -208,9 +227,18 @@ async def startup_event():
         await create_query_execution_table(DB_PATH)
         logger.info("Database initialized and migrations complete")
 
-        # Initialize key pool
+        # Initialize key pool (legacy compatibility)
         pool = KeyPool("agents.yaml")
-        logger.info(f"Key pool initialized with {len(pool.pools)} providers")
+        logger.info(f"Legacy key pool initialized with {len(pool.pools)} providers")
+
+        # Initialize LLM Gateway and Persistent Key Vault
+        gateway = await LLMGateway.get_instance(DB_PATH)
+        logger.info("Unified LLM Gateway and Key Vault initialized")
+
+        # Initialize Session Manager
+        session_manager = SessionManager(DB_PATH)
+        await session_manager.init_session_tables()
+        logger.info("Session Manager & Knowledge Graph tables initialized")
 
         # Initialize scraper registry
         import yaml
@@ -1095,7 +1123,7 @@ async def get_query_execution(query_id: str):
 @app.get("/api/keys/status")
 async def get_keys_status():
     """
-    Get current status of all API keys in the key pool.
+    Get current status of all API keys in the key pool (legacy).
     Shows ready/cooling/exhausted states for debugging.
     """
     try:
@@ -1117,6 +1145,433 @@ async def get_keys_status():
     except Exception as e:
         logger.error(f"get_keys_status error: {e}")
         raise HTTPException(status_code=500, detail="Failed to get key status")
+
+
+# ── Phase 1: Dynamic Key Vault & Gateway Endpoints ─────────────────────────
+
+@app.get("/api/keys", response_model=list[KeyModel])
+async def list_vault_keys(provider: Optional[str] = None):
+    """List all API keys stored in the persistent SQLite vault (values masked)."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    return await gateway.vault.list_keys(provider=provider)
+
+
+@app.post("/api/keys", response_model=KeyModel)
+async def create_vault_key(req: KeyCreateRequest):
+    """Add a new API key to the vault without restarting the server."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    try:
+        return await gateway.vault.add_key(
+            provider=req.provider,
+            key_value=req.key_value,
+            label=req.label,
+            rpm_limit=req.rpm_limit,
+            daily_quota=req.daily_quota,
+        )
+    except Exception as e:
+        logger.error(f"Failed to add key: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/api/keys/{key_id}", response_model=Optional[KeyModel])
+async def update_vault_key(key_id: str, req: KeyUpdateRequest):
+    """Update settings (label, rpm, quota, status) for an existing key."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    key = await gateway.vault.update_key(key_id, req)
+    if not key:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return key
+
+
+@app.delete("/api/keys/{key_id}")
+async def delete_vault_key(key_id: str):
+    """Delete an API key from the persistent vault."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    success = await gateway.vault.delete_key(key_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"status": "deleted", "id": key_id}
+
+
+@app.post("/api/keys/test", response_model=KeyTestResult)
+async def test_unpersisted_key(req: KeyTestRequest):
+    """Probe test an unpersisted key to verify credentials and measure latency."""
+    return await UnifiedLLMClient.test_key(req.provider, req.key_value, req.model)
+
+
+@app.post("/api/keys/{key_id}/test", response_model=KeyTestResult)
+async def test_vault_key(key_id: str, model: Optional[str] = None):
+    """Probe test an existing saved key in the vault."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    raw_info = await gateway.vault.get_raw_key(key_id)
+    if not raw_info:
+        raise HTTPException(status_code=404, detail="Key not found")
+    key_model, raw_val = raw_info
+    res = await UnifiedLLMClient.test_key(key_model.provider, raw_val, model)
+    res.key_id = key_id
+    return res
+
+
+@app.get("/api/keys/summary")
+async def get_vault_summary():
+    """Get aggregated quota, error, and status summary across all free-tier providers."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    return await gateway.vault.get_status_summary()
+
+
+@app.post("/api/gateway/mode")
+async def set_gateway_mode(mode: ResearchMode):
+    """Switch gateway between 'economy' and 'deep_research' modes."""
+    if not gateway:
+        raise HTTPException(status_code=503, detail="Gateway not initialized")
+    gateway.set_research_mode(mode)
+    return {"status": "updated", "mode": mode.value}
+
+
+# ── Phase 2: Multi-Turn Sessions & Knowledge Graph Endpoints ───────────────
+
+@app.get("/api/sessions", response_model=list[SessionModel])
+async def list_sessions(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    """List conversational research sessions."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    return await session_manager.list_sessions(limit=limit, offset=offset)
+
+
+@app.post("/api/sessions", response_model=SessionModel)
+async def create_session(req: SessionCreateRequest):
+    """Create a new research session."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    return await session_manager.create_session(
+        title=req.title,
+        focus_domain=req.focus_domain or "general",
+        research_mode=req.research_mode or "deep_research",
+    )
+
+
+@app.get("/api/sessions/{session_id}", response_model=SessionModel)
+async def get_session_details(session_id: str):
+    """Get details for a specific session."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    s = await session_manager.get_session(session_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return s
+
+
+@app.patch("/api/sessions/{session_id}", response_model=SessionModel)
+async def update_session_details(session_id: str, req: SessionUpdateRequest):
+    """Update title, focus domain, or mode for a session."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    s = await session_manager.update_session(
+        session_id=session_id,
+        title=req.title,
+        focus_domain=req.focus_domain,
+        research_mode=req.research_mode,
+    )
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return s
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session and all its associated messages and graphs."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    await session_manager.delete_session(session_id)
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.get("/api/sessions/{session_id}/messages", response_model=list[MessageModel])
+async def get_session_messages(session_id: str, branch_leaf_id: Optional[str] = None):
+    """
+    Get messages for a session.
+    If branch_leaf_id is provided, reconstructs the active branch lineage
+    (backtracking / deviation support!).
+    """
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    return await session_manager.get_messages(session_id, branch_leaf_id=branch_leaf_id)
+
+
+@app.get("/api/sessions/{session_id}/graph", response_model=SessionGraphModel)
+async def get_session_knowledge_graph(session_id: str):
+    """Get cumulative living Knowledge Graph (nodes and edges) for a session."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    return await session_manager.get_session_graph(session_id)
+
+
+@app.get("/api/sessions/{session_id}/chunks")
+async def get_session_chunks(session_id: str, q: Optional[str] = Query(None, description="Search query")):
+    """Get or search retrieved research chunks for a session (Evidence Lens & Provenance)."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    if q and q.strip():
+        return await session_manager.search_research_chunks(session_id, q.strip(), limit=20)
+    
+    # Return recent chunks for the session
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT id, source_name as source, title, url, content_clean as content, relevance_score as score, created_at
+            FROM research_chunks
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT 50
+            """,
+            (session_id,)
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/sessions/{session_id}/chat")
+async def session_chat_turn(session_id: str, req: ChatTurnRequest):
+    """
+    Submit a conversational research turn in a session.
+    Inherits context from parent_message_id, conducts multi-agent research,
+    extracts Knowledge Graph triples, and saves turn lineage.
+    """
+    if not session_manager or not pool or not registry or not event_bus:
+        raise HTTPException(status_code=503, detail="Services not fully initialized")
+
+    session = await session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    query_text = req.message.strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # 1. Save user message to conversational tree
+    user_msg = await session_manager.add_message(
+        session_id=session_id,
+        role="user",
+        content=query_text,
+        parent_message_id=req.parent_message_id,
+    )
+
+    # Auto-generate session title if still default
+    if session.title == "New Investigation" and session.message_count <= 1:
+        await session_manager.update_session(session_id, title=query_text[:50])
+
+    # 2. Build multi-turn conversational context
+    conv_context = await session_manager.build_conversation_context(
+        session_id=session_id,
+        current_query=query_text,
+        parent_message_id=req.parent_message_id,
+    )
+
+    ratio_controls = _normalize_ratio(req.llm_ratio, req.scraper_ratio)
+    turn_query_id = req.turn_id.strip() if req.turn_id and req.turn_id.strip() else str(uuid.uuid4())[:8]
+
+    # Track in-flight task for cancellation
+    current_task = asyncio.current_task()
+    if current_task:
+        running_queries[turn_query_id] = current_task
+
+    # 3. Execute research pipeline
+    try:
+        pipeline_res = await run(
+            query=query_text,
+            pool=pool,
+            registry=registry,
+            query_id=turn_query_id,
+            event_bus=event_bus,
+            query_controls={
+                "focus_area": req.focus_domain or session.focus_domain,
+                "ratio_controls": ratio_controls,
+                "conversation_context": conv_context,
+            },
+        )
+    except asyncio.CancelledError:
+        logger.info(f"Turn {turn_query_id} was cancelled by operator.")
+        await session_manager.add_message(
+            session_id=session_id,
+            role="assistant",
+            content="*[Research cancelled by operator]*",
+            parent_message_id=user_msg.id,
+            status="cancelled",
+        )
+        raise HTTPException(status_code=499, detail="Turn cancelled by operator")
+    except Exception as e:
+        logger.error(f"Turn pipeline error: {e}")
+        err_msg = await session_manager.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=f"An error occurred during research: {str(e)}",
+            parent_message_id=user_msg.id,
+            status="error",
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        running_queries.pop(turn_query_id, None)
+
+    answer = pipeline_res.get("answer", "")
+    sources = pipeline_res.get("sources", [])
+    reasoning = pipeline_res.get("plan", {}).get("reasoning", "")
+
+    # 4. Save assistant response
+    assistant_msg = await session_manager.add_message(
+        session_id=session_id,
+        role="assistant",
+        content=answer,
+        parent_message_id=user_msg.id,
+        reasoning_trace=reasoning,
+        status="done",
+        metadata={
+            "query_id": turn_query_id,
+            "confidence": pipeline_res.get("confidence", 0.0),
+            "sources": sources,
+            "duration_ms": pipeline_res.get("duration_ms", 0.0),
+        },
+    )
+
+    # 5. Extract knowledge graph triples using GraphExtractorAgent (Fast LLM + Fallback + Bridge Linker)
+    existing_graph = await session_manager.get_session_graph(session_id)
+    graph_extractor = GraphExtractorAgent(gateway or pool)
+    nodes, edges = await graph_extractor.extract_graph(
+        session_id=session_id,
+        message_id=assistant_msg.id,
+        query=query_text,
+        answer=answer,
+        findings=pipeline_res.get("findings", []),
+        sources=sources,
+        query_id=turn_query_id,
+        existing_nodes=existing_graph.nodes,
+        existing_edges=existing_graph.edges,
+    )
+    if nodes or edges:
+        await session_manager.add_graph_elements(session_id, nodes, edges)
+
+    # 6. Save research chunks into session manager for provenance & local FTS
+    if pipeline_res.get("chunks"):
+        await session_manager.add_research_chunks(
+            session_id=session_id,
+            message_id=assistant_msg.id,
+            chunks=pipeline_res.get("chunks", []),
+        )
+
+    # 7. Retrieve updated cumulative session graph
+    cumulative_graph = await session_manager.get_session_graph(session_id)
+
+    return {
+        "session_id": session_id,
+        "turn_id": turn_query_id,
+        "user_message": user_msg,
+        "assistant_message": assistant_msg,
+        "answer": answer,
+        "confidence": pipeline_res.get("confidence", 0.0),
+        "sources": sources,
+        "duration_ms": pipeline_res.get("duration_ms", 0.0),
+        "new_graph_nodes": nodes,
+        "new_graph_edges": edges,
+        "cumulative_graph": cumulative_graph,
+    }
+
+
+# ── Phase 5: Contradiction Radar & Export Studio Endpoints ──────────────────
+
+@app.get("/api/sessions/{session_id}/contradictions")
+async def get_session_contradictions(session_id: str):
+    """Retrieve all identified contradictions and conflicting claims for a session."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    return await session_manager.get_session_contradictions(session_id)
+
+
+@app.post("/api/sessions/{session_id}/graph/reconcile")
+async def reconcile_session_graph(session_id: str):
+    """Reconciles disconnected subgraphs and isolated nodes into a unified knowledge graph."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+    return await session_manager.reconcile_session_graph(session_id)
+
+
+@app.get("/api/sessions/{session_id}/export/markdown")
+async def export_session_markdown(session_id: str, branch_leaf_id: Optional[str] = None):
+    """Export complete research dossier to Markdown format."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+
+    session = await session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = await session_manager.get_messages(session_id, branch_leaf_id=branch_leaf_id)
+    graph = await session_manager.get_session_graph(session_id)
+    chunks = await session_manager.search_research_chunks(session_id, "", limit=100)
+
+    md_content = SessionExporter.to_markdown(session, messages, graph, chunks)
+    filename = f"zhenyi_dossier_{session_id}.md"
+    return PlainTextResponse(
+        content=md_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.get("/api/sessions/{session_id}/export/bibtex")
+async def export_session_bibtex(session_id: str):
+    """Export all cited sources and references to BibTeX (.bib) format."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+
+    session = await session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = await session_manager.get_messages(session_id)
+    chunks = await session_manager.search_research_chunks(session_id, "", limit=100)
+
+    bib_content = SessionExporter.to_bibtex(session, chunks=chunks, messages=messages)
+    filename = f"zhenyi_references_{session_id}.bib"
+    return PlainTextResponse(
+        content=bib_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.get("/api/sessions/{session_id}/export/obsidian")
+async def export_session_obsidian(session_id: str):
+    """Export Knowledge Graph to native spatial Obsidian Canvas format (.canvas)."""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not initialized")
+
+    session = await session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    graph = await session_manager.get_session_graph(session_id)
+    canvas_dict = SessionExporter.to_obsidian_canvas(session, graph)
+    return JSONResponse(
+        content=canvas_dict,
+        headers={"Content-Disposition": f'attachment; filename="zhenyi_graph_{session_id}.canvas"'}
+    )
+
+
+@app.post("/api/sessions/{session_id}/cancel/{turn_id}")
+async def cancel_session_turn(session_id: str, turn_id: str):
+    """Cancel an active in-flight research turn."""
+    if turn_id in running_queries:
+        task = running_queries[turn_id]
+        task.cancel()
+        logger.info(f"Cancelled in-flight turn {turn_id} for session {session_id}")
+        return {"status": "cancelled", "turn_id": turn_id, "session_id": session_id}
+    return {"status": "not_running", "turn_id": turn_id, "session_id": session_id}
 
 
 # ── WebSocket Endpoints ─────────────────────────────────────────────────
@@ -1175,6 +1630,13 @@ async def websocket_query_stream(websocket: WebSocket, query_id: str):
             logger.info(f"[WS] Unsubscribed {query_id}")
         except Exception as e:
             logger.debug(f"[WS] Unsubscribe error: {e}")
+
+
+# ── Static UI Mounting ──────────────────────────────────────────────────
+ui_dist = Path("web-ui/dist")
+if ui_dist.exists() and (ui_dist / "index.html").exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────

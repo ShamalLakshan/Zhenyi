@@ -134,3 +134,24 @@ scrapers:
     enabled: true
     results_per_query: 8
     timeout_seconds: 15
+  semantic_scholar:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 15
+  crossref:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 12
+  pubmed:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 15
+  reddit:
+    enabled: true
+    results_per_query: 8
+    timeout_seconds: 12
+  jina_reader:
+    enabled: true
+    results_per_query: 6
+    timeout_seconds: 15
+

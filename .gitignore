@@ -1,10 +1,46 @@
-# Environment variables and local overrides
+# ── Environment Variables & API Keys ──────────────────────────────────────────
 .env
 .env.*
-!.env.example
-!.env.sample
+*.env
+*.key
+*.keys
+*.pem
+*.secret
+*.secrets
+credentials.json
+token.json
+keys.json
+*key*.json
+!*.env.example
+!*.env.sample
+!web-ui/.env.example
 
-# Python virtual environments and bytecode
+# ── Databases, Local Stores & Storage ─────────────────────────────────────────
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+zhenyi.db
+storage/
+data/
+cache/
+*.storage
+downloads/
+temp/
+tmp/
+
+# ── Logs & Query Dumps ────────────────────────────────────────────────────────
+logs/
+logs/**
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Python Virtual Environments & Bytecode ────────────────────────────────────
 venv/
 .venv/
 env/
@@ -27,36 +63,23 @@ __pycache__/
 .coverage.*
 htmlcov/
 
-# Node / package manager artifacts
+# ── Node.js & Web Frontend Artifacts ──────────────────────────────────────────
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+web-ui/node_modules/
+dist/
+web-ui/dist/
+build/
+out/
 .vite/
+web-ui/.vite/
 .turbo/
 .parcel-cache/
-
-# Build / distribution outputs
-build/
-dist/
-out/
 coverage/
 test-results/
 *.tsbuildinfo
+.eslintcache
 
-# Application data, logs, and databases
-logs/
-logs/queries/
-*.log
-*.db
-*.db-wal
-*.db-shm
-*.db-journal
-*.sqlite
-*.sqlite3
-
-# Editor and IDE settings
+# ── IDE & Editor Configuration ────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
@@ -66,20 +89,14 @@ logs/queries/
 .sublime-workspace
 .sublime-project
 
-# Operating system files
+# ── Operating System Files ────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 Desktop.ini
 ehthumbs.db
 
-# Misc local caches and temporary files
-.cache/
-.eslintcache
+# ── Project Specific Temporary Files ──────────────────────────────────────────
 *.tmp
 *.temp
 *.bak
-
-# Repository-specific generated content
 project-assets/*.tmp
-new-zhenyi-ui/dist/
-web-ui/dist/
