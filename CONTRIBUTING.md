@@ -51,7 +51,32 @@ Zhenyi/
 
 ## 2. Development Setup
 
-### Prerequisites
+### Container Development (Recommended)
+
+To avoid local Python and Node dependency issues, you can develop directly inside an isolated container using **Podman** or **Docker**:
+
+1. **Using VS Code / Cursor / Windsurf Dev Containers**:
+   - Open the project in VS Code with the *Dev Containers* extension installed.
+   - Click **"Reopen in Container"** when prompted. The IDE will mount your workspace into the container with hot-reload and language tools enabled.
+
+2. **Using the CLI Helper**:
+   ```bash
+   cp .env.example .env
+   # Start dev container with live code reload
+   ./scripts/container.sh dev
+   ```
+
+3. **Disk Hygiene**:
+   To reclaim container storage at any time:
+   ```bash
+   ./scripts/container.sh clean
+   ```
+
+---
+
+### Native Local Setup (Without Containers)
+
+#### Prerequisites
 
 - **Python**: 3.10 or higher
 - **Node.js**: 18.0.0 or higher
@@ -59,7 +84,7 @@ Zhenyi/
 - **Git**
 - Free-tier API keys for at least one supported LLM provider (Google Gemini recommended as orchestrator)
 
-### Backend Setup (Python)
+#### Backend Setup (Python)
 
 Clone the repository and create an isolated virtual environment:
 

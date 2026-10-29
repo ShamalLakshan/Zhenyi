@@ -1,0 +1,39 @@
+{
+  "name": "Zhenyi Development",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind,Z",
+  "workspaceFolder": "/app",
+  "remoteUser": "zhenyi",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Zhenyi Research Studio",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "containerEnv": {
+    "DB_PATH": "/app/data/zhenyi.db",
+    "LOG_DIR": "/app/logs",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.extraPaths": ["/app"],
+        "files.exclude": {
+          "**/.git": true,
+          "**/.venv": true,
+          "**/__pycache__": true
+        }
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}

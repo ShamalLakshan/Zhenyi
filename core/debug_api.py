@@ -12,6 +12,7 @@ Usage:
   report = await export_query_debug_report("abc123", "/tmp/report.json")
 """
 
+import os
 import aiosqlite
 import json
 import logging
@@ -19,7 +20,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-DB_PATH = "zhenyi.db"
+DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 
 
 async def _execute_one(self, sql, params=()):

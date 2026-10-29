@@ -1,0 +1,84 @@
+# ── Secrets, Keys & Environment Variables ──────────────────────────────
+.env
+.env.*
+*.env
+*.key
+*.keys
+*.pem
+*.secret
+*.secrets
+credentials*.json
+token.json
+keys.json
+*key*.json
+!*.env.example
+!web-ui/.env.example
+
+# ── Databases & Persistent Local State ─────────────────────────────────
+*.db
+*.db-*
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+zhenyi.db*
+data/
+storage/
+cache/
+
+# ── Runtime Logs & Telemetry ───────────────────────────────────────────
+logs/
+*.log
+council.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ── Python Bytecode & Virtual Environments ─────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Node.js & Web Frontend Heavy Folders ───────────────────────────────
+node_modules/
+web-ui/node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+web-ui/.vite/
+web-ui/coverage/
+*.tsbuildinfo
+
+# ── Version Control & Tooling Artifacts ─────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# ── IDEs, Editors & OS Files ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Large Documentation Assets Not Needed in Production Runtime ────────
+project-assets/screenshots/
+diagrams/
+todo.md

@@ -17,16 +17,19 @@ All tables link to queries via query_id and are batch-inserted at pipeline end.
 import aiosqlite
 import json
 import time
+import os
+from pathlib import Path
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-DB_PATH = "zhenyi.db"
+DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 
 
 async def init_debug_tables(db_path: str = DB_PATH):
     """Create all debug logging tables. Safe to call multiple times."""
     try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(db_path) as db:
             await db.executescript("""
                 PRAGMA journal_mode=WAL;

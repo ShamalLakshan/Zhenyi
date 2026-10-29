@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 
 
 async def add_column_if_not_exists(
@@ -49,7 +50,7 @@ async def add_column_if_not_exists(
         return False
 
 
-async def migrate_to_latest(db_path: str = "zhenyi.db") -> bool:
+async def migrate_to_latest(db_path: str = DB_PATH) -> bool:
     """
     Run all pending migrations to bring database schema up to date.
     Safe to call multiple times — uses IF NOT EXISTS semantics.
@@ -57,6 +58,7 @@ async def migrate_to_latest(db_path: str = "zhenyi.db") -> bool:
     Returns True if migration succeeded (or was unnecessary).
     """
     try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(db_path) as db:
             # Check if db exists and has tables
             cursor = await db.execute(
@@ -89,12 +91,13 @@ async def migrate_to_latest(db_path: str = "zhenyi.db") -> bool:
         return False
 
 
-async def create_query_execution_table(db_path: str = "zhenyi.db") -> bool:
+async def create_query_execution_table(db_path: str = DB_PATH) -> bool:
     """
     Create query_execution table for real-time progress tracking.
     Safe to call multiple times — uses IF NOT EXISTS.
     """
     try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS query_execution (
@@ -119,7 +122,7 @@ async def create_query_execution_table(db_path: str = "zhenyi.db") -> bool:
         return False
 
 
-async def init_all_tables(db_path: str = "zhenyi.db") -> bool:
+async def init_all_tables(db_path: str = DB_PATH) -> bool:
     """
     Initialize database with all required tables and migrations.
     Called at application startup.

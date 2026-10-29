@@ -11,6 +11,8 @@ WAL mode ensures concurrent reads don't block writes.
 All operations are fire-and-forget safe — failures are logged, never raised.
 """
 
+import os
+from pathlib import Path
 import aiosqlite
 import json
 import time
@@ -18,12 +20,13 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-DB_PATH = "zhenyi.db"
+DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 
 
 async def init_db(db_path: str = DB_PATH):
     """Create all tables. Safe to call multiple times — uses IF NOT EXISTS."""
     try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(db_path) as db:
             await db.executescript("""
                 PRAGMA journal_mode=WAL;

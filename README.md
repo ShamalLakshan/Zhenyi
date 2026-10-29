@@ -14,6 +14,9 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](pyproject.toml)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](server.py)
 [![React + Vite](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB.svg)](web-ui)
+[![Docker Image Version](https://img.shields.io/docker/v/shamallakshan/zhenyi?sort=semver&logo=docker&logoColor=white)](https://hub.docker.com/r/shamallakshan/zhenyi)
+[![Docker Image Size](https://img.shields.io/docker/image-size/shamallakshan/zhenyi/0.2.1?logo=docker&logoColor=white&label=image%20size)](https://hub.docker.com/r/shamallakshan/zhenyi)
+[![Docker Pulls](https://img.shields.io/docker/pulls/shamallakshan/zhenyi?logo=docker&logoColor=white)](https://hub.docker.com/r/shamallakshan/zhenyi)
 
 </div>
 
@@ -46,7 +49,88 @@ For a comprehensive explanation of pipeline stages, role scheduling, and failure
 
 ## Quickstart
 
-### 1. Environment Preparation
+You can run Zhenyi immediately using the **pre-built Docker image**, develop locally via **Containers**, or setup a **Native Python Environment**.
+
+---
+
+### Option A: Run Instantly via Docker Hub (Fastest, Zero Setup)
+
+Pull and run the official pre-built image (~127 MB compressed) without needing to clone the source code or install local dependencies:
+
+#### Using Docker:
+```bash
+# 1. Pull the official release
+docker pull shamallakshan/zhenyi:0.2.1
+
+# 2. Run the container (pass API keys and persist database state)
+docker run -d \
+  --name zhenyi \
+  -p 8000:8000 \
+  -e GEMINI_KEY_1="your_gemini_api_key" \
+  -v zhenyi_data:/app/data \
+  shamallakshan/zhenyi:0.2.1
+```
+
+Or using an existing `.env` file:
+```bash
+docker run -d \
+  --name zhenyi \
+  -p 8000:8000 \
+  --env-file .env \
+  -v zhenyi_data:/app/data \
+  shamallakshan/zhenyi:0.2.1
+```
+
+#### Using Podman (Rootless):
+```bash
+podman run -d \
+  --name zhenyi \
+  -p 8000:8000 \
+  --userns=keep-id \
+  --env-file .env \
+  -v ./data:/app/data:Z \
+  docker.io/shamallakshan/zhenyi:0.2.1
+```
+
+Open your browser at **[http://localhost:8000](http://localhost:8000)**.
+
+---
+
+### Option B: Local Container Development & Build
+
+Ideal if you want to develop features, modify scrapers, or customize agents without local Python/Node dependency conflicts:
+
+#### 1. Clone & Configure
+```bash
+git clone https://github.com/ShamalLakshan/zhenyi.git
+cd zhenyi
+cp .env.example .env
+```
+*(Populate `.env` with your provider API keys)*
+
+#### 2. Launch Development Mode
+Using the provided CLI helper (works with Podman or Docker):
+```bash
+# Start container with live code reload & workspace mount
+./scripts/container.sh dev
+
+# Or build the image locally (<420MB uncompressed)
+./scripts/container.sh build
+
+# Prune build caches anytime to preserve disk storage
+./scripts/container.sh clean
+```
+
+Or with Docker Compose:
+```bash
+docker compose up
+```
+
+---
+
+### Option C: Native Environment Setup
+
+#### 1. Environment Preparation
 
 ```bash
 git clone https://github.com/ShamalLakshan/zhenyi.git
@@ -58,7 +142,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
+#### 2. Configuration
 
 ```bash
 cp .env.example .env
@@ -72,7 +156,7 @@ GROQ_KEY_1=your_groq_api_key
 OR_KEY_1=your_openrouter_api_key
 ```
 
-### 3. Execution
+#### 3. Execution
 
 ```bash
 uvicorn server:app --reload --host 0.0.0.0 --port 8000
