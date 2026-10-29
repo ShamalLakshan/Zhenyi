@@ -1,6 +1,6 @@
 [project]
 name = "zhenyi"
-version = "0.2.0"
+version = "0.2.1"
 description = "Autonomous Multi-Agent Niche Research Studio with Dynamic Knowledge Graph"
 readme = "README.md"
 requires-python = ">=3.10"

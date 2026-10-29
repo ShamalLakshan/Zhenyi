@@ -220,6 +220,10 @@ async def startup_event():
     try:
         logger.info("Starting up...")
         
+        # Ensure storage and log directories exist
+        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+
         # Initialize database and run migrations
         await init_db(DB_PATH)
         await init_debug_tables(DB_PATH)

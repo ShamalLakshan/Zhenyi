@@ -6,6 +6,7 @@ Enforces sliding window rate limits, performs automated failover,
 and records token metrics and latency.
 """
 
+import os
 import time
 import asyncio
 import logging
@@ -19,6 +20,7 @@ from core.gateway.rate_limiter import SlidingWindowRateLimiter
 from core.gateway.llm_client import UnifiedLLMClient
 
 logger = logging.getLogger(__name__)
+DB_PATH = os.getenv("DB_PATH", "zhenyi.db")
 
 
 class LLMGateway:
@@ -27,13 +29,13 @@ class LLMGateway:
     _instance: Optional["LLMGateway"] = None
     _lock = asyncio.Lock()
 
-    def __init__(self, db_path: str = "zhenyi.db"):
+    def __init__(self, db_path: str = DB_PATH):
         self.vault = KeyVault(db_path=db_path)
         self.rate_limiter = SlidingWindowRateLimiter()
         self.research_mode = ResearchMode.DEEP_RESEARCH
 
     @classmethod
-    async def get_instance(cls, db_path: str = "zhenyi.db") -> "LLMGateway":
+    async def get_instance(cls, db_path: str = DB_PATH) -> "LLMGateway":
         if cls._instance is None:
             async with cls._lock:
                 if cls._instance is None:

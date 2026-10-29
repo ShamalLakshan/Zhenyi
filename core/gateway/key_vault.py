@@ -12,6 +12,7 @@ import time
 import uuid
 import yaml
 import logging
+from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 from dotenv import load_dotenv
 
@@ -47,6 +48,7 @@ class KeyVault:
 
     async def init_vault(self):
         """Create api_keys table if not exists and seed if empty."""
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (

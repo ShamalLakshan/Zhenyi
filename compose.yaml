@@ -1,0 +1,64 @@
+services:
+  # ── Production / Evaluation Service ─────────────────────────────────────────
+  zhenyi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shamallakshan/zhenyi:latest
+    container_name: zhenyi
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DB_PATH=/app/data/zhenyi.db
+      - LOG_DIR=/app/logs
+    volumes:
+      - zhenyi-data:/app/data:Z
+      - zhenyi-logs:/app/logs:Z
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1536M
+
+  # ── Development Service (Hot-Reload & Live Volume Mount) ────────────────────
+  zhenyi-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shamallakshan/zhenyi:dev
+    container_name: zhenyi-dev
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DB_PATH=/app/data/zhenyi.db
+      - LOG_DIR=/app/logs
+    volumes:
+      # Mount host repository into container for instant code reloading
+      - .:/app:z
+      # Keep local database and logs in isolated container volumes to prevent hot-reload loops
+      - zhenyi-dev-data:/app/data:Z
+      - zhenyi-dev-logs:/app/logs:Z
+    # Reload server on Python edits while strictly excluding databases and logs
+    command: >
+      uvicorn server:app --reload --host 0.0.0.0 --port 8000
+      --reload-exclude "data/*"
+      --reload-exclude "logs/*"
+      --reload-exclude "*.db*"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+
+volumes:
+  zhenyi-data:
+  zhenyi-logs:
+  zhenyi-dev-data:
+  zhenyi-dev-logs:

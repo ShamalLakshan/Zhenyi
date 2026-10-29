@@ -13,6 +13,7 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 from core.session.models import (
@@ -32,6 +33,7 @@ class SessionManager:
 
     async def init_session_tables(self):
         """Create sessions, messages, and graph tables if not exists."""
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
